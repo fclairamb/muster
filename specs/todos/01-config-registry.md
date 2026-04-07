@@ -60,3 +60,13 @@ go test ./internal/config/... ./internal/registry/...
 ```
 
 Green.
+
+## Implementation Plan
+
+1. Add `github.com/BurntSushi/toml` to go.mod via `go get`.
+2. `internal/config/config.go` — Path resolution, types, Load (missing → empty, no error), Save (atomic via tempfile + rename), helpers for default `FileManager`/`Editor`.
+3. `internal/config/config_test.go` — round-trip, missing file, defaults, atomic-ish behavior.
+4. `internal/registry/registry.go` — Add (abs+dedupe+touch), Remove, Touch, List. Wraps config with `Path string` field for per-test isolation.
+5. `internal/registry/registry_test.go` — idempotent Add, relative-path normalization, Touch on missing returns ErrNotFound.
+6. QA: `make test` and `make vet`.
+
