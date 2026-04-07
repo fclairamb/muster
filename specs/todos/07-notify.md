@@ -87,3 +87,11 @@ go test ./internal/notify/...
 ```
 
 Green. Manual smoke test executed once and confirmed visually.
+
+## Implementation Plan
+
+1. `internal/notify/notify.go` — Notifier interface, Recording fake, OsascriptNotifier real impl with safe escaping.
+2. `internal/notify/dispatch.go` — Dispatcher with `Handle(Event)`, transition rules, name resolver injected.
+3. `internal/notify/notify_test.go` — Dispatcher table tests + osascript escaping unit tests.
+4. `internal/notify/manual_test.go` (//go:build manual) — real osascript smoke test.
+5. QA.
