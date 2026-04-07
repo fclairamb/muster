@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"time"
 
@@ -29,7 +30,38 @@ import (
 )
 
 // version is overridden at build time via -ldflags="-X main.version=...".
+// When ldflags are not set (e.g. `go build`, `go install`), init() falls back
+// to runtime/debug.ReadBuildInfo() which embeds VCS revision + dirty flag
+// automatically for any go-build from a git checkout.
 var version = "dev"
+
+func init() {
+	if version != "dev" {
+		return // ldflags wins
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+	var rev, dirty string
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			if s.Value == "true" {
+				dirty = "-dirty"
+			}
+		}
+	}
+	if rev == "" {
+		return
+	}
+	if len(rev) > 7 {
+		rev = rev[:7]
+	}
+	version = rev + dirty
+}
 
 func main() {
 	if err := newApp().Run(context.Background(), os.Args); err != nil {
