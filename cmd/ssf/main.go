@@ -3,14 +3,19 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
+	"time"
 
 	"github.com/fclairamb/ssf/internal/config"
+	"github.com/fclairamb/ssf/internal/hooks"
 	"github.com/fclairamb/ssf/internal/orgprefix"
 	"github.com/fclairamb/ssf/internal/registry"
 	"github.com/fclairamb/ssf/internal/render"
 	"github.com/fclairamb/ssf/internal/repoinfo"
+	"github.com/fclairamb/ssf/internal/slug"
+	"github.com/fclairamb/ssf/internal/state"
 )
 
 func main() {
@@ -49,6 +54,13 @@ func run(args []string, stdout, stderr *os.File) error {
 	if err := reg.Add(target); err != nil {
 		return fmt.Errorf("register dir: %w", err)
 	}
+	// Install Claude Code hooks for the registered repo. Failures are
+	// logged but never abort registration.
+	if info, err := repoinfo.Inspect(target); err == nil {
+		if err := hooks.Install(info.RepoRoot, slug.Slug(info.RepoRoot)); err != nil {
+			slog.Warn("install hooks", "err", err)
+		}
+	}
 
 	dirs, err := reg.List()
 	if err != nil {
@@ -81,8 +93,24 @@ func run(args []string, stdout, stderr *os.File) error {
 }
 
 func runHook(args []string, stderr *os.File) error {
-	if len(args) >= 2 && args[0] == "write" {
-		return fmt.Errorf("not implemented")
+	if len(args) < 3 || args[0] != "write" {
+		return fmt.Errorf("usage: ssf hook write <slug> <state>")
 	}
-	return fmt.Errorf("usage: ssf hook write <slug> <state>")
+	hookSlug := args[1]
+	kind := state.Kind(args[2])
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	info, err := repoinfo.Inspect(cwd)
+	if err != nil {
+		return err
+	}
+	st := state.State{
+		Kind:    kind,
+		Ts:      time.Now().UTC(),
+		Session: "ssf-" + hookSlug,
+	}
+	return state.Write(info.RepoRoot, hookSlug, st)
 }

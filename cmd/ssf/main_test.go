@@ -65,3 +65,27 @@ func TestCLIRegisterAndList(t *testing.T) {
 		t.Fatalf("expected foo before bar after touch: %q", out)
 	}
 }
+
+func TestHookWriteCreatesStateFile(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go missing")
+	}
+	bin := buildBinary(t)
+	xdg := t.TempDir()
+	repo := t.TempDir()
+
+	cmd := exec.Command(bin, "hook", "write", "abc123", "ready")
+	cmd.Dir = repo
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg, "HOME="+xdg)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("hook write: %v %s", err, out)
+	}
+	path := repo + "/.ssf/state/abc123.json"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read state file: %v", err)
+	}
+	if !strings.Contains(string(b), "ready") {
+		t.Fatalf("state file missing kind: %s", b)
+	}
+}
