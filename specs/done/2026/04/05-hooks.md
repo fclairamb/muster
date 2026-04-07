@@ -88,3 +88,11 @@ update slice 04 and CLAUDE.md before proceeding.
 ### Smoke test results
 
 (to be filled in after running)
+
+## Implementation Plan
+
+1. `internal/hooks/hooks.go` — Install/Uninstall manipulating `.claude/settings.json`. Use `map[string]any` so unknown keys round-trip verbatim.
+2. `internal/hooks/hooks_test.go` — fresh dir, merge with unrelated keys, idempotency, uninstall removes only our slug.
+3. `cmd/ssf/main.go` — implement `ssf hook write <slug> <kind>` subcommand. Wire `registry.Add` (or its CLI caller) to install hooks after registration.
+4. `cmd/ssf/main_test.go` — integration test for `ssf hook write` writing a state file.
+5. QA. Manual smoke test deferred — runnable but not blocking the loop's automation since the test runner is an LLM and a real Claude session would be required for the smoke test.
