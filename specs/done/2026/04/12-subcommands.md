@@ -99,4 +99,9 @@ All commands behave as documented; help text reflects them.
 
 ## Implementation Plan
 
-(filled in by /implement-todos)
+1. `cmd/ssf/list.go` — `listCommand()` returning a `*cli.Command`. Default plain output reusing entry display strings; `--json` flag emits an array of `{path, display, kind, last_opened}`.
+2. `cmd/ssf/rm.go` — `rmCommand()`. Resolves arg as either an absolute path (exact match) or 12-char slug (exact match). Calls a shared `unregister(path)` helper that does `registry.Remove` + `hooks.Uninstall`. Errors clearly on no-match or ambiguous match.
+3. Add both to `newApp().Commands`.
+4. Tests: `cmd/ssf/list_test.go`, `cmd/ssf/rm_test.go` — shell out to the built binary, register dirs, drive subcommands, assert.
+5. `version` is built into urfave/cli as `--version`; expose `ssf version` as a thin Command alias to also satisfy `ssf version`.
+6. QA.

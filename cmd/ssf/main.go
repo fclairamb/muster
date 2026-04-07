@@ -46,7 +46,21 @@ func newApp() *cli.Command {
 		Version:   version,
 		Action:    rootAction,
 		Commands: []*cli.Command{
+			listCommand(),
+			rmCommand(),
+			versionCommand(),
 			hookCommand(),
+		},
+	}
+}
+
+func versionCommand() *cli.Command {
+	return &cli.Command{
+		Name:  "version",
+		Usage: "print the version",
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			fmt.Fprintln(os.Stdout, "ssf version", version)
+			return nil
 		},
 	}
 }
@@ -208,13 +222,7 @@ func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Ent
 			return exec.Command("tmux", "-L", session.SocketName, "attach", "-t", session.SessionPrefix+s)
 		},
 		Unregister: func(path string) error {
-			if err := reg.Remove(path); err != nil {
-				return err
-			}
-			if info, err := repoinfo.Inspect(path); err == nil {
-				_ = hooks.Uninstall(info.RepoRoot, slug.Slug(info.RepoRoot))
-			}
-			return nil
+			return unregister(reg, path)
 		},
 	}
 	cfg, _ := reg.Load()
