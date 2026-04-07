@@ -68,3 +68,11 @@ and see the entry. (I'll do this once after implementing.)
 
 The render package is intentionally split out so the TUI in slice 08 can
 reuse it instead of duplicating layout logic.
+
+## Implementation Plan
+
+1. `internal/render/render.go` — `Line(dir, info, prefix)` pure function.
+2. `internal/render/render_test.go` — table-driven cases.
+3. `cmd/ssf/main.go` — argv routing (`ssf`, `ssf <dir>`, `ssf hook write` placeholder), register, build prefix map, print sorted list.
+4. `cmd/ssf/main_test.go` — build the binary into `t.TempDir()`, set `XDG_CONFIG_HOME`, run via `os/exec`, assert stdout.
+5. QA.
