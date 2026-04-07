@@ -143,4 +143,8 @@ asserts the same end-to-end behavior.
 
 ## Implementation Plan
 
-(filled in by /implement-todos)
+1. Add `github.com/urfave/cli/v3` to go.mod (pin v3.8.0).
+2. Refactor `cmd/ssf/main.go`: build a `cli.Command`, move register+TUI logic to `rootAction`, lift `runHook` into a hidden `hook write` Command.
+3. Add `version` package var, set via `-ldflags`. Update Makefile build target.
+4. Update `cmd/ssf/main_test.go` to drive the new entry point: --help, --version, /nonexistent rejection, hook write, the existing register-and-list flow.
+5. QA.
