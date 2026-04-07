@@ -83,4 +83,8 @@ your shell and tab-complete `ssf rm <TAB>`.
 
 ## Implementation Plan
 
-(filled in by /implement-todos)
+1. Set `EnableShellCompletion: true` on the root Command. urfave/cli/v3 auto-builds a hidden `completion` Command.
+2. Use `ConfigureShellCompletionCommand` to un-hide it so users discover `ssf completion`.
+3. Add `ShellComplete` to `rmCommand` that loads the registry and prints registered paths to `cmd.Writer`.
+4. Tests in `cmd/ssf/completion_test.go`: assert each shell script is non-empty, and assert that `ssf rm --generate-shell-completion` lists registered paths after registering two dirs.
+5. Skip the README — user can ask for it later if needed.
