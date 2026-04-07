@@ -74,3 +74,12 @@ end-to-end with the fake claude.
 - Use `tmux -L ssf` (custom socket name) so we don't pollute the user's
   default tmux server. Easier teardown in tests too.
 - Capture `tmux` stderr on errors and wrap into the returned error.
+
+## Implementation Plan
+
+1. `internal/session/session.go` — Manager interface, claudeBinary helper, buildStartArgs pure function.
+2. `internal/session/fake.go` — in-memory FakeManager for use by other packages.
+3. `internal/session/tmux.go` — Tmux real impl shelling out to `tmux -L ssf`.
+4. `internal/session/session_test.go` — pure tests for FakeManager + buildStartArgs.
+5. `internal/session/tmux_test.go` (//go:build tmux) — real tmux integration with fake claude.
+6. QA.
