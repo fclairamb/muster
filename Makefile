@@ -2,8 +2,10 @@
 
 PREFIX ?= $(HOME)/.local
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 build:
-	go build -o bin/ssf ./cmd/ssf
+	go build -ldflags="-X main.version=$(VERSION)" -o bin/ssf ./cmd/ssf
 
 install: build
 	install -d $(PREFIX)/bin
