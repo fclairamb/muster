@@ -40,11 +40,16 @@ func main() {
 
 func newApp() *cli.Command {
 	return &cli.Command{
-		Name:      "ssf",
-		Usage:     "orchestrate Claude Code instances across worktrees",
-		ArgsUsage: "[dir]",
-		Version:   version,
-		Action:    rootAction,
+		Name:                  "ssf",
+		Usage:                 "orchestrate Claude Code instances across worktrees",
+		ArgsUsage:             "[dir]",
+		Version:               version,
+		Action:                rootAction,
+		EnableShellCompletion: true,
+		ConfigureShellCompletionCommand: func(c *cli.Command) {
+			// Un-hide the auto-built completion command so users discover it.
+			c.Hidden = false
+		},
 		Commands: []*cli.Command{
 			listCommand(),
 			rmCommand(),
