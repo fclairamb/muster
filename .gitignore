@@ -1,0 +1,5 @@
+bin/
+.ssf/
+.claude/
+*.test
+coverage.out

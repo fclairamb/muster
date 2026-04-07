@@ -41,3 +41,14 @@ Both green. `./bin/ssf` prints `ssf` and exits 0.
 
 No business logic in this slice. Pure scaffolding so subsequent slices have
 predictable file paths.
+
+## Implementation Plan
+
+1. `go mod init github.com/fclairamb/ssf` (Go 1.22 minimum, current toolchain 1.26).
+2. Create `cmd/ssf/main.go` printing `ssf`.
+3. Create `doc.go` in every internal/* package + `test/e2e/`.
+4. Write `Makefile` with `test`, `test-tmux`, `test-e2e`, `smoke`, `build`, `fmt` targets.
+5. Write `.gitignore` (`bin/`, `.ssf/`, `*.test`, `coverage.out`, `.claude/`).
+6. Write `.github/workflows/ci.yml` running `make test`.
+7. QA: `go build ./... && go vet ./... && go test ./...`.
+
