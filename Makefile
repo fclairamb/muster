@@ -1,7 +1,14 @@
-.PHONY: build test test-tmux test-e2e smoke fmt vet lint clean
+.PHONY: build install test test-tmux test-e2e smoke fmt vet lint clean
+
+PREFIX ?= $(HOME)/.local
 
 build:
 	go build -o bin/ssf ./cmd/ssf
+
+install: build
+	install -d $(PREFIX)/bin
+	install -m 0755 bin/ssf $(PREFIX)/bin/ssf
+	@echo "installed $(PREFIX)/bin/ssf"
 
 test:
 	go test ./...
