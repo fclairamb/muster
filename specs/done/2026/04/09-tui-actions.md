@@ -84,3 +84,12 @@ Both green.
 Every external command goes through an injected interface
 (`gitRunner`, `opener`, `Manager`, `Notifier`). The model is constructed
 with real impls in `main.go` and fakes in tests. No globals.
+
+## Implementation Plan
+
+1. `internal/tui/actions.go` — Deps struct (Session, Git, Opener), pure builders (BuildWorktreeAdd/RemoveArgs, ValidateBranchName).
+2. `internal/tui/fakes.go` — fakeGit, fakeOpener for tests.
+3. Extend `internal/tui/model.go` — modal state (branch prompt + confirm), Enter/o/e/n/r key routing through Deps.
+4. `internal/tui/actions_test.go` — pure builder + validation tests.
+5. `internal/tui/model_actions_test.go` — drive Update with fake Deps; assert calls.
+6. QA.
