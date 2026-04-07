@@ -66,6 +66,62 @@ func TestCLIRegisterAndList(t *testing.T) {
 	}
 }
 
+func TestHelpFlag(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go missing")
+	}
+	bin := buildBinary(t)
+	out := runBin(t, bin, t.TempDir(), "--help")
+	if !strings.Contains(out, "ssf") || !strings.Contains(out, "USAGE") {
+		t.Fatalf("--help did not produce help text:\n%s", out)
+	}
+}
+
+func TestVersionFlag(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go missing")
+	}
+	bin := buildBinary(t)
+	out := runBin(t, bin, t.TempDir(), "--version")
+	if !strings.Contains(out, "ssf") {
+		t.Fatalf("--version output missing 'ssf':\n%s", out)
+	}
+}
+
+func TestRejectsNonexistentPath(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go missing")
+	}
+	bin := buildBinary(t)
+	xdg := t.TempDir()
+	cmd := exec.Command(bin, "/definitely/does/not/exist")
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg, "HOME="+xdg)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected non-zero exit, output: %s", out)
+	}
+	if !strings.Contains(string(out), "no such file") && !strings.Contains(string(out), "does/not/exist") {
+		t.Fatalf("unexpected error output: %s", out)
+	}
+}
+
+func TestRejectsExtraArg(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go missing")
+	}
+	bin := buildBinary(t)
+	xdg := t.TempDir()
+	cmd := exec.Command(bin, "/tmp", "/var")
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg, "HOME="+xdg)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error for extra arg, output: %s", out)
+	}
+	if !strings.Contains(string(out), "at most one") {
+		t.Fatalf("unexpected error: %s", out)
+	}
+}
+
 func TestHookWriteCreatesStateFile(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go missing")

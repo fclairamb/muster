@@ -27,6 +27,12 @@ func SettingsPath(repoRoot string) string {
 }
 
 // command builds the shell command ssf wires into each hook entry.
+//
+// IMPORTANT: this string is hard-coded into every .claude/settings.json
+// file ssf installs. Renaming "hook write" or reordering its arguments
+// breaks every existing installation. The corresponding subcommand
+// definition lives in cmd/ssf/main.go's hookCommand(); keep them in sync
+// and treat both as part of the public contract.
 func command(slug, kind string) string {
 	return "ssf hook write " + slug + " " + kind
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/urfave/cli/v3"
 
 	"github.com/fclairamb/ssf/internal/config"
 	"github.com/fclairamb/ssf/internal/hooks"
@@ -27,31 +28,33 @@ import (
 	"github.com/fclairamb/ssf/internal/tui"
 )
 
+// version is overridden at build time via -ldflags="-X main.version=...".
+var version = "dev"
+
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	if err := newApp().Run(context.Background(), os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, "ssf:", err)
 		os.Exit(1)
 	}
 }
 
-const usage = `ssf — superset, fixed: orchestrate Claude Code instances across worktrees.
+func newApp() *cli.Command {
+	return &cli.Command{
+		Name:      "ssf",
+		Usage:     "orchestrate Claude Code instances across worktrees",
+		ArgsUsage: "[dir]",
+		Version:   version,
+		Action:    rootAction,
+		Commands: []*cli.Command{
+			hookCommand(),
+		},
+	}
+}
 
-Usage:
-  ssf [<dir>]              Register <dir> (or cwd) and open the TUI.
-  ssf hook write <slug> <state>
-                           Internal: invoked by Claude Code hooks.
-  ssf -h | --help          Show this message.
-`
-
-func run(args []string, stdout, stderr *os.File) error {
-	if len(args) >= 1 {
-		switch args[0] {
-		case "-h", "--help", "help":
-			fmt.Fprint(stdout, usage)
-			return nil
-		case "hook":
-			return runHook(args[1:], stderr)
-		}
+// rootAction is the default Action: register the dir (or cwd) and open the TUI.
+func rootAction(ctx context.Context, cmd *cli.Command) error {
+	if cmd.Args().Len() > 1 {
+		return fmt.Errorf("expected at most one directory argument")
 	}
 
 	cfgPath, err := config.DefaultPath()
@@ -63,19 +66,15 @@ func run(args []string, stdout, stderr *os.File) error {
 		return err
 	}
 
-	var target string
-	if len(args) >= 1 {
-		target = args[0]
-	} else {
+	target := cmd.Args().First()
+	if target == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return err
 		}
 		target = cwd
 	}
-	// Validate the argument is an existing directory before touching the
-	// registry. Otherwise typos and stray flags get registered as bogus
-	// entries (e.g. "--help") that the user then has to clean up.
+
 	abs, err := filepath.Abs(target)
 	if err != nil {
 		return fmt.Errorf("resolve %q: %w", target, err)
@@ -87,11 +86,10 @@ func run(args []string, stdout, stderr *os.File) error {
 	if !fi.IsDir() {
 		return fmt.Errorf("%q is not a directory", target)
 	}
-	target = abs
-	if err := reg.Add(target); err != nil {
+	if err := reg.Add(abs); err != nil {
 		return fmt.Errorf("register dir: %w", err)
 	}
-	if info, err := repoinfo.Inspect(target); err == nil {
+	if info, err := repoinfo.Inspect(abs); err == nil {
 		if err := hooks.Install(info.RepoRoot, slug.Slug(info.RepoRoot)); err != nil {
 			slog.Warn("install hooks", "err", err)
 		}
@@ -102,14 +100,58 @@ func run(args []string, stdout, stderr *os.File) error {
 		return err
 	}
 
-	if isTerminal(stdout) {
-		return launchTUI(reg, entries)
+	if isTerminal(os.Stdout) {
+		return launchTUI(ctx, reg, entries)
 	}
-	// Non-TTY: print the rendered list.
 	for _, e := range entries {
-		fmt.Fprintln(stdout, e.Display)
+		fmt.Fprintln(os.Stdout, e.Display)
 	}
 	return nil
+}
+
+// hookCommand returns the hidden hook subcommand tree.
+//
+// IMPORTANT: the literal command string "ssf hook write <slug> <kind>" is
+// hard-coded into every .claude/settings.json file ssf installs (see
+// internal/hooks/hooks.go). Renaming this subcommand or its arguments will
+// break every existing installation. Lock the name.
+func hookCommand() *cli.Command {
+	return &cli.Command{
+		Name:   "hook",
+		Hidden: true,
+		Usage:  "internal: invoked by Claude Code hooks",
+		Commands: []*cli.Command{
+			{
+				Name:      "write",
+				ArgsUsage: "<slug> <state>",
+				Action:    runHookWrite,
+			},
+		},
+	}
+}
+
+func runHookWrite(ctx context.Context, cmd *cli.Command) error {
+	args := cmd.Args()
+	if args.Len() < 2 {
+		return fmt.Errorf("usage: ssf hook write <slug> <state>")
+	}
+	hookSlug := args.Get(0)
+	kind := state.Kind(args.Get(1))
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	info, err := repoinfo.Inspect(cwd)
+	if err != nil {
+		return err
+	}
+	st := state.State{
+		Kind:    kind,
+		Ts:      time.Now().UTC(),
+		Session: "ssf-" + hookSlug,
+	}
+	return state.Write(info.RepoRoot, hookSlug, st)
 }
 
 func isTerminal(f *os.File) bool {
@@ -156,7 +198,7 @@ func buildEntries(reg *registry.Registry) ([]tui.Entry, error) {
 	return entries, nil
 }
 
-func launchTUI(reg *registry.Registry, entries []tui.Entry) error {
+func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Entry) error {
 	tmux := session.NewTmux()
 	deps := tui.Deps{
 		Session: tmux,
@@ -169,7 +211,6 @@ func launchTUI(reg *registry.Registry, entries []tui.Entry) error {
 			if err := reg.Remove(path); err != nil {
 				return err
 			}
-			// Best-effort hook cleanup; failures are non-fatal.
 			if info, err := repoinfo.Inspect(path); err == nil {
 				_ = hooks.Uninstall(info.RepoRoot, slug.Slug(info.RepoRoot))
 			}
@@ -183,14 +224,12 @@ func launchTUI(reg *registry.Registry, entries []tui.Entry) error {
 	model := tui.NewModel(entries).WithDeps(deps)
 	program := tea.NewProgram(model, tea.WithAltScreen())
 
-	// Start a watcher pump goroutine that translates state events into
-	// program.Send calls so the model re-renders live.
 	repoRoots := make([]string, 0, len(entries))
 	for _, e := range entries {
 		repoRoots = append(repoRoots, e.Path)
 		_ = os.MkdirAll(state.DirPath(e.Path), 0o755)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	if ch, err := watcher.Watch(ctx, repoRoots); err == nil {
 		notifier := notify.OsascriptNotifier{}
@@ -249,27 +288,4 @@ type realOpener struct{}
 func (realOpener) Open(binary, path string) error {
 	cmd := exec.Command(binary, path)
 	return cmd.Start()
-}
-
-func runHook(args []string, stderr *os.File) error {
-	if len(args) < 3 || args[0] != "write" {
-		return fmt.Errorf("usage: ssf hook write <slug> <state>")
-	}
-	hookSlug := args[1]
-	kind := state.Kind(args[2])
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	info, err := repoinfo.Inspect(cwd)
-	if err != nil {
-		return err
-	}
-	st := state.State{
-		Kind:    kind,
-		Ts:      time.Now().UTC(),
-		Session: "ssf-" + hookSlug,
-	}
-	return state.Write(info.RepoRoot, hookSlug, st)
 }
