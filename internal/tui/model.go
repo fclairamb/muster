@@ -56,13 +56,33 @@ func (m Model) WithDeps(d Deps) Model {
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd { return nil }
 
+// StateMsg notifies the model that one entry's session state has changed.
+// Sent from the watcher pump goroutine via program.Send.
+type StateMsg struct {
+	Slug string
+	Kind state.Kind
+}
+
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case StateMsg:
+		return m.applyStateMsg(msg), nil
 	}
 	return m, nil
+}
+
+func (m Model) applyStateMsg(msg StateMsg) Model {
+	for i := range m.entries {
+		if m.entries[i].Slug == msg.Slug {
+			m.entries[i].Kind = msg.Kind
+		}
+	}
+	m.entries = SortEntries(m.entries)
+	m.applySearch()
+	return m
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -211,10 +231,18 @@ func (m Model) actionEnter() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	m.pendingAttach = entry.Slug
+	// Prefer tea.ExecProcess so the TUI suspends, runs tmux attach in the
+	// foreground, and resumes when the user detaches.
+	if m.deps.AttachCmdFunc != nil {
+		cmd := m.deps.AttachCmdFunc(entry.Slug)
+		if cmd != nil {
+			return m, tea.ExecProcess(cmd, func(error) tea.Msg { return nil })
+		}
+	}
 	if err := m.deps.Session.Attach(entry.Slug); err != nil {
 		m.lastError = err.Error()
 	}
-	m.pendingAttach = entry.Slug
 	return m, nil
 }
 

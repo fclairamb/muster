@@ -2,20 +2,28 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"sort"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/fclairamb/ssf/internal/config"
 	"github.com/fclairamb/ssf/internal/hooks"
+	"github.com/fclairamb/ssf/internal/notify"
 	"github.com/fclairamb/ssf/internal/orgprefix"
 	"github.com/fclairamb/ssf/internal/registry"
 	"github.com/fclairamb/ssf/internal/render"
 	"github.com/fclairamb/ssf/internal/repoinfo"
+	"github.com/fclairamb/ssf/internal/session"
 	"github.com/fclairamb/ssf/internal/slug"
 	"github.com/fclairamb/ssf/internal/state"
+	"github.com/fclairamb/ssf/internal/state/watcher"
+	"github.com/fclairamb/ssf/internal/tui"
 )
 
 func main() {
@@ -26,7 +34,6 @@ func main() {
 }
 
 func run(args []string, stdout, stderr *os.File) error {
-	// Subcommand routing.
 	if len(args) >= 1 && args[0] == "hook" {
 		return runHook(args[1:], stderr)
 	}
@@ -40,7 +47,6 @@ func run(args []string, stdout, stderr *os.File) error {
 		return err
 	}
 
-	// Determine target directory: argv[0] if present, else cwd.
 	var target string
 	if len(args) >= 1 {
 		target = args[0]
@@ -54,17 +60,41 @@ func run(args []string, stdout, stderr *os.File) error {
 	if err := reg.Add(target); err != nil {
 		return fmt.Errorf("register dir: %w", err)
 	}
-	// Install Claude Code hooks for the registered repo. Failures are
-	// logged but never abort registration.
 	if info, err := repoinfo.Inspect(target); err == nil {
 		if err := hooks.Install(info.RepoRoot, slug.Slug(info.RepoRoot)); err != nil {
 			slog.Warn("install hooks", "err", err)
 		}
 	}
 
-	dirs, err := reg.List()
+	entries, err := buildEntries(reg)
 	if err != nil {
 		return err
+	}
+
+	if isTerminal(stdout) {
+		return launchTUI(reg, entries)
+	}
+	// Non-TTY: print the rendered list.
+	for _, e := range entries {
+		fmt.Fprintln(stdout, e.Display)
+	}
+	return nil
+}
+
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// buildEntries reads the registry, runs repoinfo on each dir, derives org
+// prefixes, looks up the on-disk state, and returns sorted TUI entries.
+func buildEntries(reg *registry.Registry) ([]tui.Entry, error) {
+	dirs, err := reg.List()
+	if err != nil {
+		return nil, err
 	}
 	infos := make([]repoinfo.Info, len(dirs))
 	orgs := make([]string, 0, len(dirs))
@@ -77,19 +107,107 @@ func run(args []string, stdout, stderr *os.File) error {
 	}
 	prefixes := orgprefix.Derive(orgs, nil)
 
-	// Sort: most recently opened first (status sorting comes in slice 08).
-	idx := make([]int, len(dirs))
-	for i := range idx {
-		idx[i] = i
+	entries := make([]tui.Entry, 0, len(dirs))
+	for i, d := range dirs {
+		s := slug.Slug(infos[i].RepoRoot)
+		st, _ := state.Read(infos[i].RepoRoot, s)
+		entries = append(entries, tui.Entry{
+			Display:  render.Line(d, infos[i], prefixes[infos[i].Org]),
+			Path:     infos[i].RepoRoot,
+			Slug:     s,
+			Kind:     st.Kind,
+			LastOpen: d.LastOpened,
+		})
 	}
-	sort.SliceStable(idx, func(i, j int) bool {
-		return dirs[idx[i]].LastOpened.After(dirs[idx[j]].LastOpened)
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].LastOpen.After(entries[j].LastOpen)
 	})
+	return entries, nil
+}
 
-	for _, i := range idx {
-		fmt.Fprintln(stdout, render.Line(dirs[i], infos[i], prefixes[infos[i].Org]))
+func launchTUI(reg *registry.Registry, entries []tui.Entry) error {
+	tmux := session.NewTmux()
+	deps := tui.Deps{
+		Session: tmux,
+		Git:     realGit{},
+		Opener:  realOpener{},
+		AttachCmdFunc: func(s string) *exec.Cmd {
+			return exec.Command("tmux", "-L", session.SocketName, "attach", "-t", session.SessionPrefix+s)
+		},
 	}
-	return nil
+	cfg, _ := reg.Load()
+	deps.FileManager = cfg.Settings.ResolveFileManager()
+	deps.Editor = cfg.Settings.ResolveEditor()
+
+	model := tui.NewModel(entries).WithDeps(deps)
+	program := tea.NewProgram(model, tea.WithAltScreen())
+
+	// Start a watcher pump goroutine that translates state events into
+	// program.Send calls so the model re-renders live.
+	repoRoots := make([]string, 0, len(entries))
+	for _, e := range entries {
+		repoRoots = append(repoRoots, e.Path)
+		_ = os.MkdirAll(state.DirPath(e.Path), 0o755)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if ch, err := watcher.Watch(ctx, repoRoots); err == nil {
+		notifier := notify.OsascriptNotifier{}
+		dispatcher := notify.NewDispatcher(notifier, displayNameLookup(entries))
+		go func() {
+			for ev := range ch {
+				dispatcher.Handle(ev)
+				program.Send(tui.StateMsg{Slug: ev.Slug, Kind: ev.State.Kind})
+			}
+		}()
+	}
+
+	_, err := program.Run()
+	return err
+}
+
+func displayNameLookup(entries []tui.Entry) func(string) string {
+	m := make(map[string]string, len(entries))
+	for _, e := range entries {
+		m[e.Slug] = e.Display
+	}
+	return func(s string) string {
+		if v, ok := m[s]; ok {
+			return v
+		}
+		return s
+	}
+}
+
+// realGit is a thin shell-out wrapper implementing tui.GitRunner.
+type realGit struct{}
+
+func (realGit) Run(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func (realGit) IsDirty(dir string) (bool, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, err
+	}
+	return len(out) > 0, nil
+}
+
+// realOpener spawns external GUI tools (file manager, editor) and returns
+// without blocking.
+type realOpener struct{}
+
+func (realOpener) Open(binary, path string) error {
+	cmd := exec.Command(binary, path)
+	return cmd.Start()
 }
 
 func runHook(args []string, stderr *os.File) error {

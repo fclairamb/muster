@@ -136,6 +136,25 @@ func TestViewRendersEmoji(t *testing.T) {
 	}
 }
 
+func TestStateMsgUpdatesEntryAndResorts(t *testing.T) {
+	// Two entries, both currently with no instance.
+	in := []Entry{
+		{Display: "s/one", Slug: "one", Kind: state.KindNone, LastOpen: time.Now().Add(-time.Hour)},
+		{Display: "s/two", Slug: "two", Kind: state.KindNone, LastOpen: time.Now()},
+	}
+	m := NewModel(in)
+	// Initially newest (two) is on top.
+	if m.filtered[0].Slug != "two" {
+		t.Fatalf("initial top = %q, want two", m.filtered[0].Slug)
+	}
+	// Flip the older one to waiting_input → it should jump to the top.
+	next, _ := m.Update(StateMsg{Slug: "one", Kind: state.KindWaitingInput})
+	m = next.(Model)
+	if m.filtered[0].Slug != "one" || m.filtered[0].Kind != state.KindWaitingInput {
+		t.Fatalf("after StateMsg, top = %+v", m.filtered[0])
+	}
+}
+
 func TestViewIndentNestsChildren(t *testing.T) {
 	in := []Entry{
 		{Display: "s/repo [main]", Indent: 0, Kind: state.KindNone, LastOpen: time.Now()},

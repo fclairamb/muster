@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -26,6 +27,12 @@ type Deps struct {
 	Opener      Opener
 	FileManager string // resolved file manager binary
 	Editor      string // resolved editor binary
+
+	// AttachCmdFunc, when non-nil, is preferred over Session.Attach for the
+	// Enter action. It returns the *exec.Cmd that the model wraps in
+	// tea.ExecProcess so the TUI suspends, runs tmux attach in the
+	// foreground, and resumes on detach.
+	AttachCmdFunc func(slug string) *exec.Cmd
 }
 
 // BuildWorktreeAddArgs returns the git argv for adding a new worktree.
