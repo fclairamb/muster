@@ -18,10 +18,30 @@ import (
 
 func rmCommand() *cli.Command {
 	return &cli.Command{
-		Name:      "rm",
-		Usage:     "unregister a directory by path or slug",
-		ArgsUsage: "<path-or-slug>",
-		Action:    runRm,
+		Name:          "rm",
+		Usage:         "unregister a directory by path or slug",
+		ArgsUsage:     "<path-or-slug>",
+		Action:        runRm,
+		ShellComplete: completeRegisteredPaths,
+	}
+}
+
+// completeRegisteredPaths suggests registered dir paths for tab completion.
+func completeRegisteredPaths(ctx context.Context, cmd *cli.Command) {
+	cfgPath, err := config.DefaultPath()
+	if err != nil {
+		return
+	}
+	reg, err := registry.New(cfgPath)
+	if err != nil {
+		return
+	}
+	dirs, err := reg.List()
+	if err != nil {
+		return
+	}
+	for _, d := range dirs {
+		fmt.Fprintln(cmd.Writer, d.Path)
 	}
 }
 
