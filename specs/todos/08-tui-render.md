@@ -80,3 +80,10 @@ a real terminal.
 `teatest` is the official Charm test harness. It writes input bytes to
 the program and captures rendered output. This is *the* mechanism that
 lets me verify the TUI without a human.
+
+## Implementation Plan
+
+1. `internal/tui/entry.go` — Entry struct + sort comparator (status, then last-opened desc).
+2. `internal/tui/model.go` — Bubble Tea Model with cursor, search state, Update, View. Tests drive Update directly with `tea.KeyMsg`s rather than spinning up `teatest` (faster, no goroutine timing).
+3. `internal/tui/model_test.go` — sort, filter (`/`), cursor movement, hierarchy indent, quit message.
+4. QA.
