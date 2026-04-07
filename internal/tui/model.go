@@ -197,22 +197,32 @@ func (m Model) handleConfirmRemoveKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.modal = modalNone
 			return m, nil
 		}
-		if m.deps.Git != nil {
-			dirty, _ := m.deps.Git.IsDirty(entry.Path)
-			if dirty && !m.modalForce {
-				m.modalErr = "worktree is dirty; press f to force"
-				return m, nil
+		if entry.IsWorktree {
+			// Worktree path: dirty check, kill session, git worktree remove.
+			if m.deps.Git != nil {
+				dirty, _ := m.deps.Git.IsDirty(entry.Path)
+				if dirty && !m.modalForce {
+					m.modalErr = "worktree is dirty; press f to force"
+					return m, nil
+				}
+			}
+			if m.deps.Session != nil {
+				_ = m.deps.Session.Kill(entry.Slug)
+			}
+			if m.deps.Git != nil {
+				args := BuildWorktreeRemoveArgs(entry.Path, m.modalForce)
+				_, _ = m.deps.Git.Run("", args...)
+			}
+		} else {
+			// Registered dir: just unregister. Sessions and worktrees are
+			// kept on disk per spec.
+			if m.deps.Unregister != nil {
+				if err := m.deps.Unregister(entry.Path); err != nil {
+					m.modalErr = err.Error()
+					return m, nil
+				}
 			}
 		}
-		if m.deps.Session != nil {
-			_ = m.deps.Session.Kill(entry.Slug)
-		}
-		if m.deps.Git != nil {
-			args := BuildWorktreeRemoveArgs(entry.Path, m.modalForce)
-			_, _ = m.deps.Git.Run("", args...)
-		}
-		// Remove the entry from the local view (registry persistence is the
-		// caller's responsibility — slice 10's e2e wires it).
 		m.entries = removeEntry(m.entries, *entry)
 		m.applySearch()
 		m.modal = modalNone
@@ -333,11 +343,16 @@ func (m Model) View() string {
 			b.WriteString(m.modalErr)
 		}
 	case m.modal == modalConfirmRemove:
-		b.WriteString("\nRemove this entry? (y/n)")
-		if m.modalForce {
-			b.WriteString("  [force=on]")
+		entry := m.selectedEntry()
+		if entry != nil && entry.IsWorktree {
+			b.WriteString("\nRemove worktree AND kill its session? (y/n)")
+			if m.modalForce {
+				b.WriteString("  [force=on]")
+			} else {
+				b.WriteString("  press f to force")
+			}
 		} else {
-			b.WriteString("  press f to force")
+			b.WriteString("\nUnregister this dir? Sessions and worktrees are kept. (y/n)")
 		}
 		if m.modalErr != "" {
 			b.WriteString("\n  ⚠ ")

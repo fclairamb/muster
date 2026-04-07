@@ -33,6 +33,11 @@ type Deps struct {
 	// tea.ExecProcess so the TUI suspends, runs tmux attach in the
 	// foreground, and resumes on detach.
 	AttachCmdFunc func(slug string) *exec.Cmd
+
+	// Unregister persists removal of a registered (non-worktree) entry —
+	// drops it from the registry and uninstalls its Claude Code hooks.
+	// Without this, removed entries reappear on the next launch.
+	Unregister func(path string) error
 }
 
 // BuildWorktreeAddArgs returns the git argv for adding a new worktree.

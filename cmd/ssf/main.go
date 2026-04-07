@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -33,9 +34,24 @@ func main() {
 	}
 }
 
+const usage = `ssf — superset, fixed: orchestrate Claude Code instances across worktrees.
+
+Usage:
+  ssf [<dir>]              Register <dir> (or cwd) and open the TUI.
+  ssf hook write <slug> <state>
+                           Internal: invoked by Claude Code hooks.
+  ssf -h | --help          Show this message.
+`
+
 func run(args []string, stdout, stderr *os.File) error {
-	if len(args) >= 1 && args[0] == "hook" {
-		return runHook(args[1:], stderr)
+	if len(args) >= 1 {
+		switch args[0] {
+		case "-h", "--help", "help":
+			fmt.Fprint(stdout, usage)
+			return nil
+		case "hook":
+			return runHook(args[1:], stderr)
+		}
 	}
 
 	cfgPath, err := config.DefaultPath()
@@ -57,6 +73,21 @@ func run(args []string, stdout, stderr *os.File) error {
 		}
 		target = cwd
 	}
+	// Validate the argument is an existing directory before touching the
+	// registry. Otherwise typos and stray flags get registered as bogus
+	// entries (e.g. "--help") that the user then has to clean up.
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		return fmt.Errorf("resolve %q: %w", target, err)
+	}
+	fi, err := os.Stat(abs)
+	if err != nil {
+		return fmt.Errorf("%q: %w", target, err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%q is not a directory", target)
+	}
+	target = abs
 	if err := reg.Add(target); err != nil {
 		return fmt.Errorf("register dir: %w", err)
 	}
@@ -133,6 +164,16 @@ func launchTUI(reg *registry.Registry, entries []tui.Entry) error {
 		Opener:  realOpener{},
 		AttachCmdFunc: func(s string) *exec.Cmd {
 			return exec.Command("tmux", "-L", session.SocketName, "attach", "-t", session.SessionPrefix+s)
+		},
+		Unregister: func(path string) error {
+			if err := reg.Remove(path); err != nil {
+				return err
+			}
+			// Best-effort hook cleanup; failures are non-fatal.
+			if info, err := repoinfo.Inspect(path); err == nil {
+				_ = hooks.Uninstall(info.RepoRoot, slug.Slug(info.RepoRoot))
+			}
+			return nil
 		},
 	}
 	cfg, _ := reg.Load()

@@ -11,12 +11,13 @@ import (
 // subdir of a repo, or a worktree under a repo. Indent controls vertical
 // nesting in the rendered list.
 type Entry struct {
-	Display  string
-	Indent   int
-	Kind     state.Kind
-	Path     string
-	Slug     string
-	LastOpen time.Time
+	Display    string
+	Indent     int
+	Kind       state.Kind
+	Path       string
+	Slug       string
+	LastOpen   time.Time
+	IsWorktree bool // worktrees get the git-worktree-remove flow; registered repos get unregistered
 }
 
 // kindRank maps a state.Kind to its sort priority (lower = higher up).

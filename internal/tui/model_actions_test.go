@@ -120,10 +120,39 @@ func TestNewWorktreeRejectsBadBranch(t *testing.T) {
 	}
 }
 
+func TestRemoveUnregistersRegisteredDir(t *testing.T) {
+	sm, g, _, deps := actionDeps()
+	var unregistered []string
+	deps.Unregister = func(path string) error {
+		unregistered = append(unregistered, path)
+		return nil
+	}
+	m := NewModel([]Entry{entryAt("abc", "/repo")}).WithDeps(deps)
+	next, _ := m.Update(key("r"))
+	m = next.(Model)
+	next, _ = m.Update(key("y"))
+	m = next.(Model)
+	if len(unregistered) != 1 || unregistered[0] != "/repo" {
+		t.Fatalf("expected Unregister(/repo), got %v", unregistered)
+	}
+	if len(m.Filtered()) != 0 {
+		t.Fatalf("entry not removed from view: %v", m.Filtered())
+	}
+	// No git or session calls should have happened.
+	if len(g.Snapshot()) != 0 {
+		t.Fatalf("git unexpectedly called: %v", g.Snapshot())
+	}
+	if list, _ := sm.List(); len(list) != 0 {
+		t.Fatalf("session unexpectedly touched: %v", list)
+	}
+}
+
 func TestRemoveCleanWorktree(t *testing.T) {
 	sm, g, _, deps := actionDeps()
 	_ = sm.Start("abc", "/wt")
-	m := NewModel([]Entry{entryAt("abc", "/wt")}).WithDeps(deps)
+	wt := entryAt("abc", "/wt")
+	wt.IsWorktree = true
+	m := NewModel([]Entry{wt}).WithDeps(deps)
 	next, _ := m.Update(key("r"))
 	m = next.(Model)
 	next, _ = m.Update(key("y"))
@@ -144,7 +173,9 @@ func TestRemoveDirtyRequiresForce(t *testing.T) {
 	sm, g, _, deps := actionDeps()
 	g.Dirty = true
 	_ = sm.Start("abc", "/wt")
-	m := NewModel([]Entry{entryAt("abc", "/wt")}).WithDeps(deps)
+	wt := entryAt("abc", "/wt")
+	wt.IsWorktree = true
+	m := NewModel([]Entry{wt}).WithDeps(deps)
 	next, _ := m.Update(key("r"))
 	m = next.(Model)
 	next, _ = m.Update(key("y"))
