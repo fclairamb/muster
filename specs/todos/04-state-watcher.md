@@ -73,3 +73,11 @@ Green.
 The watcher must survive `os.Remove` of the state dir without crashing
 (it can happen during `r` cleanup). On removal, log a warning, drop the
 events, keep watching the parent.
+
+## Implementation Plan
+
+1. `internal/state/state.go` — Kind constants, State struct, Read/Write with atomic writes; missing/corrupt → KindNone, no error.
+2. `internal/state/state_test.go` — round-trip, missing, corrupt.
+3. `internal/state/watcher/watcher.go` — fsnotify-based Watch returning a channel; debounce window + green-confirm window; survives parent dir removal.
+4. `internal/state/watcher/watcher_test.go` — write→event, debounce coalescing, green confirmation, working-overrides-ready.
+5. QA.
