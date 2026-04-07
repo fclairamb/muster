@@ -79,3 +79,14 @@ go test ./internal/slug/... ./internal/repoinfo/... ./internal/orgprefix/...
 ```
 
 Green.
+
+## Implementation Plan
+
+1. `internal/slug/slug.go` — sha256-based 12-char slug from absolute path.
+2. `internal/slug/slug_test.go` — stable, distinct, format checks.
+3. `internal/repoinfo/repoinfo.go` — shells out to git; parses SSH/HTTPS URLs; prefers `upstream` over `origin`.
+4. `internal/repoinfo/repoinfo_test.go` — uses temp git repos with fake remotes.
+5. `internal/orgprefix/orgprefix.go` — shortest-unique-prefix algorithm with override support.
+6. `internal/orgprefix/orgprefix_test.go` — table-driven cases from spec.
+7. QA.
+
