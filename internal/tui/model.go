@@ -4,11 +4,13 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/fclairamb/muster/internal/gitstats"
 	"github.com/fclairamb/muster/internal/session"
+	"github.com/fclairamb/muster/internal/slug"
 	"github.com/fclairamb/muster/internal/state"
 )
 
@@ -23,6 +25,17 @@ type statsMsg struct {
 	stats gitstats.Stats
 }
 
+// worktreeAddDoneMsg is the result of an asynchronous `git worktree add`
+// fired from the new-worktree (`n`) modal. On success the model inserts a
+// new indented entry directly under the parent so the user sees the new
+// worktree in the list immediately.
+type worktreeAddDoneMsg struct {
+	parentSlug string
+	path       string
+	branch     string
+	err        error
+}
+
 // branchListMsg carries the result of an asynchronous `git branch` invocation
 // fired when the user opens the branch picker.
 type branchListMsg struct {
@@ -32,11 +45,13 @@ type branchListMsg struct {
 }
 
 // branchCheckoutDoneMsg is the result of an asynchronous `git checkout` fired
-// from the branch picker. On success, the picker is dismissed and entries
-// are refreshed; on error, the picker stays open and renders the message.
+// from the branch picker. On success, the picker is dismissed, the row's
+// display is updated to the new branch, and entries are refreshed; on
+// error, the picker stays open and renders the message.
 type branchCheckoutDoneMsg struct {
-	slug string
-	err  error
+	slug   string
+	branch string
+	err    error
 }
 
 // worktreeRemoveDoneMsg is the result of an asynchronous worktree remove
@@ -66,6 +81,22 @@ func StatsSuffix(s gitstats.Stats) string {
 		fmt.Fprintf(&b, " ?%d", s.Untracked)
 	}
 	return b.String()
+}
+
+// setDisplayBranch rewrites the trailing " [<branch>]" suffix on a TUI
+// display string. Used after an in-TUI checkout so the row reflects the
+// new branch without recomputing org prefixes or re-inspecting every
+// registered repo. Display strings without a bracketed suffix (non-GitHub
+// entries) are returned unchanged.
+func setDisplayBranch(display, branch string) string {
+	if !strings.HasSuffix(display, "]") {
+		return display
+	}
+	i := strings.LastIndex(display, " [")
+	if i < 0 {
+		return display
+	}
+	return display[:i] + " [" + branch + "]"
 }
 
 // modalKind is the kind of overlay currently shown over the list, if any.
@@ -261,6 +292,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastError = ""
 		}
 		return m, nil
+	case worktreeAddDoneMsg:
+		if msg.err != nil {
+			m.lastError = msg.err.Error()
+			return m, nil
+		}
+		// Insert a fresh indented entry directly under the parent so the
+		// SortEntries grouping keeps it nested. Display mirrors the
+		// existing convention for nested children: "[<branch>]".
+		newEntry := Entry{
+			Display:    "[" + msg.branch + "]",
+			Indent:     1,
+			Path:       msg.path,
+			RepoRoot:   msg.path, // a worktree is its own git root
+			Slug:       slug.Slug(msg.path),
+			Kind:       state.KindNone,
+			LastOpen:   time.Now(),
+			IsWorktree: true,
+		}
+		m.entries = insertAfterSlug(m.entries, msg.parentSlug, newEntry)
+		m = m.applyRefresh()
+		return m, m.statsCmd()
 	case branchListMsg:
 		// Late delivery: ignore if the picker has already been dismissed,
 		// or if the user opened a different entry's picker since.
@@ -282,6 +334,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.modalErr = msg.err.Error()
 			return m, nil
+		}
+		// Rewrite the bracketed branch in the row's display so the new
+		// branch is visible immediately, without restarting muster or
+		// waiting for a polling refresh.
+		for i := range m.entries {
+			if m.entries[i].Slug == msg.slug {
+				m.entries[i].Display = setDisplayBranch(m.entries[i].Display, msg.branch)
+				break
+			}
 		}
 		m.modal = modalNone
 		m.branches = nil
@@ -505,7 +566,19 @@ func (m Model) handleBranchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.deps.Git != nil {
 			args := BuildWorktreeAddArgs(entry.Path, m.modalInput)
 			id := (&m).beginOp("git worktree add " + m.modalInput)
-			cmd = wrapOp(id, m.gitRunCmd("", args...))
+			git := m.deps.Git
+			parentSlug := entry.Slug
+			branch := m.modalInput
+			path := WorktreePathFor(entry.Path, branch)
+			cmd = wrapOp(id, func() tea.Msg {
+				_, err := git.Run("", args...)
+				return worktreeAddDoneMsg{
+					parentSlug: parentSlug,
+					path:       path,
+					branch:     branch,
+					err:        err,
+				}
+			})
 		}
 		m.modal = modalNone
 		m.modalInput = ""
@@ -612,9 +685,10 @@ func (m Model) handleBranchPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		slug, repo := m.branchSlug, m.branchRepo
 		args := BuildCheckoutArgs(repo, target, create)
 		m.modalErr = ""
+		branch := target
 		cmd := func() tea.Msg {
 			_, err := git.Run("", args...)
-			return branchCheckoutDoneMsg{slug: slug, err: err}
+			return branchCheckoutDoneMsg{slug: slug, branch: branch, err: err}
 		}
 		label := "git checkout " + target
 		if create {
@@ -834,6 +908,33 @@ func (m Model) statsCmd() tea.Cmd {
 		})
 	}
 	return tea.Batch(cmds...)
+}
+
+// insertAfterSlug returns entries with newEntry inserted directly after the
+// first entry whose Slug matches parentSlug. If the parent is followed by
+// already-indented children, the new entry is appended after them so the
+// nesting order stays stable. If the parent isn't found the new entry is
+// appended to the end.
+func insertAfterSlug(entries []Entry, parentSlug string, newEntry Entry) []Entry {
+	parentIdx := -1
+	for i, e := range entries {
+		if e.Slug == parentSlug && e.Indent == 0 {
+			parentIdx = i
+			break
+		}
+	}
+	if parentIdx < 0 {
+		return append(entries, newEntry)
+	}
+	insertAt := parentIdx + 1
+	for insertAt < len(entries) && entries[insertAt].Indent > 0 {
+		insertAt++
+	}
+	out := make([]Entry, 0, len(entries)+1)
+	out = append(out, entries[:insertAt]...)
+	out = append(out, newEntry)
+	out = append(out, entries[insertAt:]...)
+	return out
 }
 
 // removeBySlugPath returns entries with any element matching slug+path removed.

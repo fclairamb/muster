@@ -59,14 +59,20 @@ type Deps struct {
 	GitStats func(path string) gitstats.Stats
 }
 
+// WorktreePathFor returns the on-disk path muster will create for a new
+// worktree of repo on branch. Used by both the git arg builder and the
+// post-create entry insertion so they agree on where the worktree lives.
+func WorktreePathFor(repo, branch string) string {
+	base := filepath.Base(repo)
+	return filepath.Join(repo, ".muster", "worktrees", base+"-"+slugifyBranch(branch))
+}
+
 // BuildWorktreeAddArgs returns the git argv for adding a new worktree.
 //
 // The new worktree lives at <repo>/.muster/worktrees/<repo>-<branch-slug> and
 // branches off <branch> from HEAD.
 func BuildWorktreeAddArgs(repo, branch string) []string {
-	slug := slugifyBranch(branch)
-	base := filepath.Base(repo)
-	target := filepath.Join(repo, ".muster", "worktrees", base+"-"+slug)
+	target := WorktreePathFor(repo, branch)
 	return []string{"-C", repo, "worktree", "add", target, "-b", branch}
 }
 

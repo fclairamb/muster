@@ -118,6 +118,25 @@ func TestNewWorktreeFlow(t *testing.T) {
 	if calls[0][1] != "-C" || calls[0][2] != "/repo" || calls[0][3] != "worktree" {
 		t.Fatalf("git args = %v", calls[0])
 	}
+	// After success, a new indented worktree entry must be inserted
+	// directly under the parent so the user sees it without restarting.
+	if len(m.entries) != 2 {
+		t.Fatalf("expected 2 entries (parent + new worktree), got %d: %+v", len(m.entries), m.entries)
+	}
+	parent, child := m.entries[0], m.entries[1]
+	if parent.Slug != "abc" || parent.Indent != 0 {
+		t.Fatalf("parent shifted: %+v", parent)
+	}
+	if child.Indent != 1 || !child.IsWorktree {
+		t.Fatalf("child not nested or not marked as worktree: %+v", child)
+	}
+	if child.Display != "[feat/x]" {
+		t.Fatalf("child display = %q, want %q", child.Display, "[feat/x]")
+	}
+	wantPath := "/repo/.muster/worktrees/repo-feat-x"
+	if child.Path != wantPath {
+		t.Fatalf("child path = %q, want %q", child.Path, wantPath)
+	}
 }
 
 func TestNewWorktreeRejectsBadBranch(t *testing.T) {
@@ -160,6 +179,49 @@ func branchPickerSetup(t *testing.T, branches string, runErr error) (Model, *Fak
 	}
 	m = drainCmd(t, m, cmd)
 	return m, g
+}
+
+func TestSetDisplayBranch(t *testing.T) {
+	cases := []struct{ in, branch, want string }{
+		{"f/muster [main]", "feat/x", "f/muster [feat/x]"},
+		{"f/muster apps/api [main]", "feat/x", "f/muster apps/api [feat/x]"},
+		{"local-dir", "feat/x", "local-dir"}, // no bracket → unchanged
+		{"weird]", "feat/x", "weird]"},        // no " [" prefix → unchanged
+	}
+	for _, c := range cases {
+		got := setDisplayBranch(c.in, c.branch)
+		if got != c.want {
+			t.Errorf("setDisplayBranch(%q,%q) = %q, want %q", c.in, c.branch, got, c.want)
+		}
+	}
+}
+
+func TestBranchPickerCheckoutUpdatesDisplay(t *testing.T) {
+	_, g, _, deps := actionDeps()
+	g.RunFunc = func(dir string, args []string) (string, error) {
+		if len(args) >= 4 && args[2] == "branch" {
+			return "main\nfeat/y\n", nil
+		}
+		return "", nil
+	}
+	e := entryAt("abc", "/repo")
+	e.Display = "f/muster [main]"
+	m := NewModel([]Entry{e}).WithDeps(deps)
+	// Open picker, drain list load.
+	next, cmd := m.Update(key("b"))
+	m = next.(Model)
+	m = drainCmd(t, m, cmd)
+	// Move cursor to feat/y and enter.
+	for _, r := range "feat/y" {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(Model)
+	}
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	m = drainCmd(t, m, cmd)
+	if m.entries[0].Display != "f/muster [feat/y]" {
+		t.Fatalf("entry display not updated: %q", m.entries[0].Display)
+	}
 }
 
 func TestBranchPickerCheckoutExisting(t *testing.T) {
