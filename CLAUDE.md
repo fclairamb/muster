@@ -1,260 +1,200 @@
-# ssf — SuperSetFixed
+# ssf — context for future Claude sessions
 
-Orchestrate a set of Claude Code instances. Roughly the same goal as
-[superset.sh](https://superset.sh) and [claude-squad](https://github.com/smtg-ai/claude-squad),
-but sitting between the two:
+See `README.md` for the user-facing description. This file is the
+internal reference for working on the code.
 
-- Superset is great but eats all the machine's power.
-- claude-squad is lightweight but has zero cool features.
+## What this project is
 
-`ssf` aims to be lightweight *and* feature-rich.
+A Go CLI + Bubble Tea TUI that orchestrates Claude Code instances across
+registered directories via tmux sessions. Status indicators (red/green/
+yellow/white) are driven by Claude Code hooks writing to on-disk state
+files which ssf polls and reconciles with the live tmux session set.
 
----
-
-## Core concepts
-
-- **Registered directory**: a repo, or a subdirectory of a repo, that the user
-  cares about. Stored in `~/.config/ssf/config.toml`.
-- **Worktree**: a `git worktree` created under `<repo>/.ssf/worktrees/<repo>-<branch-slug>`.
-  `.ssf/` should be added to the user's global gitignore (or we add it to the
-  repo's `.git/info/exclude` automatically on first use).
-- **Session**: a `tmux` session running a single `claude` instance bound to a
-  registered directory or worktree. Session name: `ssf-<slug>`. One per
-  directory by default; users can open additional ones explicitly.
-- **State file**: `<repo>/.ssf/state/<slug>.json`, written by Claude Code hooks
-  (see "State detection" below). This is the source of truth for the colored
-  status in the TUI.
-
-Subdirectories of a repo are a *scoping hint* for Claude's CWD only — they do
-**not** get their own worktrees. Worktrees always belong to the parent repo.
-
-### Display names: abbreviated org prefix
-
-In the TUI, GitHub-backed repos are rendered as `<org-prefix>/<repo>` where
-`<org-prefix>` is the **shortest unique prefix** of the GitHub org name across
-all currently registered repos:
-
-- `stonal-tech/datalake` → `s/datalake`
-- `fclairamb/solidping` → `f/solidping`
-- `dir2 (s/repo1)` for a subdir of an abbreviated repo
-
-Rules:
-
-- **Display-only.** Tmux session names, state-file paths, and config keys
-  always use a stable internal slug (full org + repo, or a hash of the
-  absolute path). The abbreviation must never appear in any persistent
-  identifier — otherwise a future collision-driven rename orphans running
-  sessions and state files. This separation is non-negotiable.
-- **Auto-derived, shortest unique prefix, minimum 1 char.** One known org →
-  1 letter. Adding a colliding org expands both to the shortest
-  disambiguating prefix (`stonal-tech` + `some-org` → `st` and `so`).
-  Predictable, no config required, deterministic.
-- **Manual override per org** in `config.toml` for cases where the auto choice
-  is ugly or ambiguous (e.g. `microsoft` vs `meta` — user may prefer `ms`/`me`
-  rather than `mi`/`me`).
-- **Multiple remotes**: prefer `upstream` over `origin` when deriving the org,
-  so forks display as the canonical project.
-- **Non-GitHub local dirs**: no prefix, render the basename only (e.g.
-  `~/scratch/notes` → `notes`). Don't invent a fake org.
-- **No clever shortenings.** No vowel stripping, no `stnl/datalake`. Single
-  letter with fallback expansion is the sweet spot; anything fancier is a
-  memorability tax.
-
----
-
-## CLI
+## Package layout
 
 ```
-ssf [<dir>]      # Register <dir> (or cwd) if new, then open the TUI.
-ssf              # Same, with cwd.
+cmd/ssf/              CLI entry point (urfave/cli/v3). Subcommands: list, rm,
+                       version, completion, files (hidden), hook write (hidden).
+                       Real implementations of GitRunner, Opener, Tmux are
+                       wired here; nothing else knows about urfave/cli.
+
+internal/config/      TOML config load/save + Settings with nilable override
+                       pattern (ClaudeArgs, SidePanel are *T for default-vs-explicit-empty).
+internal/registry/    Thin CRUD over config.Dirs: Add (idempotent touch),
+                       Remove, Touch, List.
+internal/slug/        sha256-based 12-char stable path slug. Never leaks the
+                       org abbreviation — it's a stable internal identifier.
+internal/orgprefix/   Shortest-unique-prefix abbreviation with manual overrides.
+                       Display-only. Never used as an identifier.
+internal/repoinfo/    `git -C <dir> rev-parse --show-toplevel` + remote URL
+                       parser (SSH + HTTPS GitHub). Prefers upstream over origin.
+internal/render/      Pure function building display strings from (Dir, Info,
+                       prefix). Used by both the list subcommand and the TUI.
+internal/state/       On-disk state file format and atomic read/write.
+internal/state/watcher/ fsnotify-based watcher with debounce + green-confirm
+                       heuristic. Dispatches to tui.StateMsg via program.Send.
+internal/hooks/       Claude Code hook installer. Merges into .claude/settings.json
+                       preserving unrelated keys. Supports the optional matcher
+                       field for PreToolUse/PostToolUse on AskUserQuestion.
+internal/session/     tmux Manager interface + Tmux impl (dedicated -L ssf socket)
+                       + FakeManager. Handles the split-window for the side panel.
+internal/notify/      Notifier interface + OsascriptNotifier + TerminalNotifier
+                       + Dispatcher (transitions → notifications with sound,
+                       subtitle, group, click-to-activate).
+internal/tui/         Bubble Tea Model + Deps injection + StatusEmoji +
+                       sort/filter/hierarchy. All side effects go through Deps.
+internal/files/       `ssf files` rendering engine: git status parser, fsnotify
+                       watcher with skip list, ANSI-colored output.
+test/e2e/             Full-stack integration test gated behind e2e+tmux tags.
 ```
 
-No other subcommands in the MVP. Everything else happens in the TUI.
+## Key design decisions (read before making changes)
 
----
+### Slugs are stable identifiers, abbreviations are display-only
 
-## TUI
+Every registered path has two representations:
 
-### Home page
+- **Slug** (`sha256(absPath)[:12]`, lowercase hex). Stable across runs.
+  Used for tmux session names (`ssf-<slug>`), state file names
+  (`.ssf/state/<slug>.json`), and hook commands. **Never changes.**
+- **Display** (`<prefix>/<repo> [<branch>]` or similar). Derived from
+  `orgprefix.Derive()` which can rename abbreviations when new orgs are
+  registered. **Never appears in any persistent identifier.**
 
-Shows the list of registered directories and their worktrees, hierarchically:
+Violating this rule silently orphans running sessions and state files on
+the first collision-driven rename. Enforced by the slice 02 spec.
 
-```
-- repo1 [main] 🔴            // waiting for our input
-- repo2 [main] 🟢            // output ready
-- repo3 [main] 🟡            // working
-- repo2 [main] ⚪️            // idle Claude instance attached
-- dir2 (repo1)               // a subdir of repo1
-  - [feat/new-stuff]         // a worktree of repo1
-- repo1 [main]               // no Claude instance
-```
+### `ssf hook write <slug> <kind>` is a public contract
 
-### Status colors
+Every `.claude/settings.json` ssf installs hard-codes this literal command
+string. Renaming the subcommand or reordering arguments breaks every
+existing installation. There's a warning comment in
+`internal/hooks/hooks.go` next to `command()` and in
+`cmd/ssf/main.go`'s `hookCommand()`. Don't rename, don't reorder. If you
+add new hook events, append — don't reshuffle existing ones.
 
-| Color    | Meaning                                                  |
-|----------|----------------------------------------------------------|
-| 🔴 Red   | Claude is waiting for our input (permission or question) |
-| 🟢 Green | Claude finished and the result is ready                  |
-| 🟡 Yellow| Claude is currently working (spinner)                    |
-| ⚪️ White | A Claude instance is attached but idle                   |
-| (none)   | No Claude instance running                               |
+### Side-effect injection via Deps
 
-### Sort order
+`tui.Model` takes a `Deps` struct containing `Session`, `Git`, `Opener`,
+`AttachCmdFunc`, `Unregister`, `ReadState`, `ClearState`. Tests pass
+fakes (`session.FakeManager`, `tui.FakeGit`, `tui.FakeOpener`,
+`notify.RecordingNotifier`). Real implementations live in `cmd/ssf/main.go`
+and are never imported from other packages.
 
-1. Red
-2. Green
-3. Yellow
-4. White
-5. No instance — most recently opened first
+Consequence: the model is trivially unit-testable without spinning up a
+real terminal. Tests drive Update with `tea.KeyMsg` values directly and
+assert on the resulting model + its recorded fake calls.
 
-### Keybindings
+### State reconciliation rules
 
-| Key     | Action                                                          |
-|---------|-----------------------------------------------------------------|
-| `↑/↓`   | Move selection                                                  |
-| `Enter` | Attach to the Claude session (spawn it lazily if not running)   |
-| `/`     | Search/filter directories by name                               |
-| `n`     | Create a new worktree from the selected repo (prompts branch)   |
-| `o`     | Open file navigator (`$FILE_MANAGER`, default `open`)           |
-| `e`     | Open editor (`$VISUAL` → `$EDITOR` → fallback `zed`)            |
-| `r`     | Remove the selected entry (with confirmation)                   |
-| `q`     | Quit the TUI                                                    |
+`tui.Model.applyRefresh` runs every second (via a goroutine in `launchTUI`
+calling `program.Send(tui.RefreshMsg{})`). For each entry it:
 
-`Enter` behavior: if no Claude session exists yet for the entry, `ssf` starts
-one lazily (`tmux new-session -d -s ssf-<slug> "claude"`) and then attaches.
-Registering 10 directories does **not** spawn 10 Claudes upfront.
+1. Calls `deps.ReadState(repoRoot, slug)` to get the on-disk State.
+2. Calls `decayStale(state, now)` which collapses `working`/`waiting_input`
+   states older than `StaleThreshold` (30s) to `idle`. `ready` and `idle`
+   don't decay — they're stable resting states.
+3. Batches `deps.Session.List()` once per tick and builds a slug set for
+   membership checks.
+4. Applies the reconciliation rules:
+   - session present + state file says X → X (after decay)
+   - session present + no state file → **idle** (we have a session, claude
+     hasn't fired any hook yet, default to idle)
+   - session absent → **none**, regardless of any stale state file
 
-`r` confirmation must be explicit about what's being removed:
-- For a registered dir: "Unregister <dir>? (sessions and worktrees are kept)"
-- For a worktree: "Remove worktree <branch> AND kill its session?"
-- Refuse to remove a worktree with uncommitted changes unless `--force` is
-  passed in the confirmation prompt.
+When the user detaches from a session via `tea.ExecProcess`, the callback
+emits `attachExitedMsg{slug}`. If that entry was sitting on `KindReady`,
+the handler calls `deps.ClearState` to overwrite it with `idle` — so
+"green" is a nag, not a sticky state.
 
----
+### Bare `ssf` does NOT register cwd
 
-## State detection (the hard part)
+Only `ssf <dir>` (including `ssf .`) registers. Bare `ssf` just opens
+the TUI. Otherwise every launch from a working directory re-adds it, and
+entries the user removed with `r` reappear on the next run.
 
-This is the whole product. If status is unreliable, nothing else matters.
+### Path validation before registration
 
-**Approach: Claude Code hooks write a state file.** On first run in a
-directory, `ssf` injects the following hooks into the local
-`.claude/settings.json` (merging, not overwriting):
+`rootAction` stat-checks the target path before calling `reg.Add`. Non-
+existent or non-directory args are rejected with a helpful error. Without
+this, typos like `ssf --help` (before we had a real `--help` flag) got
+registered as phantom directories.
 
-- `UserPromptSubmit` → state = `working`
-- `Stop` → state = `ready` (green)
-- `Notification` → state = `waiting_input` (red)
-- `SessionStart` → state = `idle` (white)
+### Subdirs are first-class entries
 
-Each hook writes `<repo>/.ssf/state/<slug>.json`:
+`ssf ~/code/datalake/apps/api` keeps `apps/api` as the registered path,
+slug, and display. Hooks install at the **repo root** (so Claude finds
+them) but are **keyed by the subdir's slug**, so each subdir has its own
+session and state file. `Entry.RepoRoot` carries the git toplevel for
+state file addressing; `Entry.Path` is the registered subdir.
 
-```json
-{ "state": "working", "ts": "2026-04-08T12:34:56Z", "session": "ssf-repo1-main" }
-```
+### Side panel is opt-out with width gating
 
-The TUI watches this directory (fsnotify) and re-renders on change.
+`Tmux.Start` splits the window horizontally and runs `ssf files <cwd>` in
+the right pane when `SidePanel` is true AND terminal width ≥ 100 columns.
+Both settings are in `internal/session/tmux.go`; terminal width is
+captured in `cmd/ssf/main.go` before tmux suspends ssf.
 
-**Heuristic fallback for "waiting for input":** `Notification` fires for
-permission prompts but not necessarily for a plain idle-waiting-on-user
-state. If `Stop` fired and no `UserPromptSubmit` follows within N seconds, we
-treat the session as `ready` (green), not `waiting_input`. This assumption
-must be **validated on day 1 of the prototype** before the four-color model
-is committed to.
+## Testing philosophy
 
-Tmux pane scraping and JSONL transcript tailing were considered and rejected:
-fragile and laggy respectively. Hooks are the API.
+- **All side effects behind interfaces, tests use fakes.**
+- **TUI tested via direct `Update(tea.KeyMsg)` calls**, not `teatest`.
+  Faster and more reliable.
+- **tmux integration tests use a fake `claude` shell script** (`sleep 30`)
+  via `$SSF_CLAUDE_BINARY`. Tests spawn real tmux sessions on the `-L ssf`
+  socket, verify via `Has()`, and kill in `t.Cleanup`.
+- **Build tags**:
+  - default: pure unit tests (CI runs these)
+  - `tmux`: integration tests that need real tmux
+  - `e2e`: full-stack integration in `test/e2e/`
+  - `manual`: smoke tests that need a human to observe the result
+- **The only unavoidable human gate** is verifying real Claude Code hooks
+  fire as expected. Documented in `specs/done/2026/04/05-hooks.md`.
 
----
+## Architectural rules of thumb
 
-## Process model
+- `cmd/ssf` is the only package allowed to know about `urfave/cli`. All
+  business logic lives in `internal/*`.
+- The `tui` package **does not import `watcher` or `session.Tmux` concrete
+  types**. It talks to interfaces in `Deps` only.
+- The `hooks` package **is the public contract layer** for Claude Code
+  integration. Be careful. See "ssf hook write is a public contract".
+- State files live at the **repo root**, not the subdir. `Entry.RepoRoot`
+  is what `state.Read/Write` takes.
+- **Never poll via `watch` or depend on external tools**. ssf is
+  self-contained on purpose. The `files` package does fsnotify + git status.
 
-- **tmux** for session management. Battle-tested, attach/detach is free,
-  sessions survive `ssf` crashes. claude-squad already proves this works.
-- One tmux session per registered dir / worktree, named `ssf-<slug>`.
-- `ssf` shells out to `tmux` rather than embedding a PTY library — simpler,
-  fewer footguns.
+## What's still rough
 
-Rejected alternatives: zellij (smaller user base), raw PTYs via `creack/pty`
-(more plumbing for no real win at MVP stage).
+- **No per-session side-panel toggle.** The spec mentions `prefix + f`
+  but it's not implemented. Users get the split at session start and
+  can close the right pane manually with `tmux kill-pane`.
+- **fsnotify on macOS uses kqueue** which doesn't recurse. New subdirs
+  created after `ssf files` launches aren't watched until the 5s safety
+  poll catches them.
+- **Multi-line-wide east-asian chars in paths** can misalign the list.
+  Only handled at the emoji width level, not for arbitrary path content.
+- **Claude Code hook event names are not stable across versions.** If
+  Claude renames `PreToolUse` or removes the matcher field, hooks break.
+- **Display abbreviations are recomputed on every launch**, not persisted.
+  That's fine because they're deterministic, but it means the rendered
+  display of an entry can change when a new org is registered.
 
----
+## History
 
-## Worktree lifecycle
+Implementation specs live in `specs/done/YYYY/MM/`. Each one has a
+timestamped implementation plan appended to the bottom. Read them in
+order (00 → 14) to understand how the project evolved. Specs are frozen
+once archived — don't edit them, write a new one.
 
-- Created under `<repo>/.ssf/worktrees/<repo>-<branch-slug>`.
-- `.ssf/` is added to `.git/info/exclude` on first use so it never pollutes
-  the repo's tracked files.
-- On `r` (remove): kill the tmux session, then `git worktree remove`. Refuse
-  if there are uncommitted changes; the confirmation prompt offers a `--force`
-  toggle.
-- If the underlying branch is deleted or merged upstream, the worktree is
-  flagged in the TUI (dim color + marker) but not auto-removed. User decides.
+## When adding a new spec
 
----
+Follow the shape of `specs/done/2026/04/*.md`:
+- Goal (one paragraph)
+- Deliverables (code + tests)
+- Acceptance criteria (the exact `make test` invocation that proves it works)
+- Notes / gotchas
+- Implementation Plan section left blank, filled in when implementation starts
 
-## Stack
-
-- **Language: Go**. Single static binary, easy install, fast iteration.
-- **TUI: [Bubble Tea](https://github.com/charmbracelet/bubbletea)** + Lipgloss
-  for styling, Bubbles for the list/textinput components.
-- **Git ops**: shell out to `git` (worktree commands are simple enough — no
-  need for `go-git`).
-- **File watching**: `fsnotify` for the state directory.
-- **Config**: TOML via `BurntSushi/toml`.
-
-Rust + ratatui was considered. Go ships this kind of tool faster.
-
----
-
-## Config
-
-`~/.config/ssf/config.toml`:
-
-```toml
-[[dirs]]
-path = "/Users/florent/code/fclairamb/supersetfixed"
-last_opened = "2026-04-08T12:34:56Z"
-
-[[dirs]]
-path = "/Users/florent/code/stonal/brain"
-last_opened = "2026-04-07T09:00:00Z"
-
-[settings]
-file_manager = "open"   # overrides $FILE_MANAGER
-editor = "zed"          # overrides $VISUAL/$EDITOR
-```
-
----
-
-## MVP slices (build in this order)
-
-Each slice should be independently demoable. **Do not build the worktree UI
-before status detection works** — status is the differentiator.
-
-1. `ssf <dir>` registers a directory in `~/.config/ssf/config.toml` and opens
-   a Bubble Tea TUI listing registered dirs (hardcoded white status). Search
-   with `/`, quit with `q`.
-2. `Enter` spawns `tmux new-session -d -s ssf-<slug> "claude"` and attaches.
-   Detaching returns to the TUI.
-3. **Wire Claude Code hooks** (`Stop`, `Notification`, `UserPromptSubmit`,
-   `SessionStart`) to write `.ssf/state/<slug>.json`. Read state files in the
-   TUI and color rows accordingly. **Validate the four-color model on a real
-   session before moving on.**
-4. Worktree creation (`n`) — prompt for a branch name, run `git worktree add`,
-   show the new worktree nested under its repo in the TUI.
-5. `r` removal with confirmation, `o` file navigator, `e` editor.
-6. Sorting by status + last-opened. Hierarchical rendering (subdirs of a repo,
-   worktrees nested under repos).
-7. **macOS system notifications on state transitions** (core feature, not
-   optional). Fire a native notification whenever a session enters `red`
-   (waiting for input) or `green` (ready). Use `osascript -e 'display
-   notification ...'` for the MVP; upgrade to `terminal-notifier` or a
-   `UNUserNotificationCenter` binding later if we need actionable buttons
-   ("Attach", "Dismiss"). Notifications must include the repo + branch slug
-   so the user knows which session needs them without opening the TUI.
-
----
-
-## Open questions for later
-
-- Multi-machine sync of the registry? Probably not — keep it local.
-- Per-dir custom Claude flags or model selection? Add to config when needed.
+Run `/loop /implement-todos ultrathink` to have the specs picked up
+automatically in order.
