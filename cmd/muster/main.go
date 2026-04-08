@@ -17,6 +17,8 @@ import (
 	xterm "golang.org/x/term"
 
 	"github.com/fclairamb/muster/internal/config"
+	"github.com/fclairamb/muster/internal/gitignore"
+	"github.com/fclairamb/muster/internal/gitstats"
 	"github.com/fclairamb/muster/internal/hooks"
 	"github.com/fclairamb/muster/internal/notify"
 	"github.com/fclairamb/muster/internal/orgprefix"
@@ -156,6 +158,9 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 			if err := hooks.Install(repoRoot, slug.Slug(abs)); err != nil {
 				slog.Warn("install hooks", "err", err)
 			}
+			if err := gitignore.EnsureMusterIgnored(repoRoot); err != nil {
+				slog.Warn("update gitignore", "err", err)
+			}
 		}
 		autoAttachSlug = slug.Slug(abs)
 	}
@@ -266,6 +271,7 @@ func buildEntries(reg *registry.Registry) ([]tui.Entry, error) {
 			Slug:     s,
 			Kind:     st.Kind,
 			LastOpen: d.LastOpened,
+			Stats:    gitstats.Compute(d.Path),
 		})
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
@@ -300,6 +306,9 @@ func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Ent
 		ReadState: func(repoRoot, slug string) state.State {
 			st, _ := state.Read(repoRoot, slug)
 			return st
+		},
+		GitStats: func(path string) gitstats.Stats {
+			return gitstats.Compute(path)
 		},
 		ClearState: func(repoRoot, slug string) error {
 			return state.Write(repoRoot, slug, state.State{
@@ -345,6 +354,38 @@ func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Ent
 			}
 		}()
 	}
+
+	// Background fetch loop: every 5 minutes (and immediately at startup),
+	// run `git fetch` for each entry's path so the Behind count reflects the
+	// real remote. After each fetch wave, push a RefreshMsg so the list
+	// recomputes its stats.
+	paths := make([]string, 0, len(entries))
+	for _, e := range entries {
+		paths = append(paths, e.Path)
+	}
+	// One-shot ignore-file pass for every touched repo root.
+	for r := range rootSet {
+		_ = gitignore.EnsureMusterIgnored(r)
+	}
+	go func() {
+		fetchAll := func() {
+			for _, p := range paths {
+				_ = gitstats.Fetch(p)
+			}
+			program.Send(tui.RefreshMsg{})
+		}
+		fetchAll()
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				fetchAll()
+			}
+		}
+	}()
 
 	// Background refresh: every second, push a RefreshMsg into the program.
 	// tea.Tick can get lost across tea.ExecProcess suspensions; program.Send

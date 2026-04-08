@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/urfave/cli/v3"
@@ -36,6 +38,9 @@ func runFiles(ctx context.Context, cmd *cli.Command) error {
 	defer cancel()
 
 	ticks := files.Tick(ctx, dir)
+	// Hide cursor for the duration; restore on exit.
+	fmt.Print("\x1b[?25l")
+	defer fmt.Print("\x1b[?25h")
 	for {
 		select {
 		case <-ctx.Done():
@@ -45,9 +50,20 @@ func runFiles(ctx context.Context, cmd *cli.Command) error {
 				return nil
 			}
 			width := termWidth()
-			// Clear screen + home cursor.
-			fmt.Print("\x1b[2J\x1b[H")
-			files.Render(os.Stdout, dir, width)
+			var buf bytes.Buffer
+			files.Render(&buf, dir, width)
+			// Home cursor, then write each line with clear-to-EOL so we
+			// overwrite in place instead of clearing the whole screen
+			// (which causes flicker). Trailing rows are wiped with \x1b[J.
+			var out bytes.Buffer
+			out.WriteString("\x1b[H")
+			lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+			for _, line := range lines {
+				out.WriteString(line)
+				out.WriteString("\x1b[K\r\n")
+			}
+			out.WriteString("\x1b[J")
+			os.Stdout.Write(out.Bytes())
 		}
 	}
 }

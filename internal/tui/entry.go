@@ -4,6 +4,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/fclairamb/muster/internal/gitstats"
 	"github.com/fclairamb/muster/internal/state"
 )
 
@@ -24,6 +25,7 @@ type Entry struct {
 	Slug       string
 	LastOpen   time.Time
 	IsWorktree bool // worktrees get the git-worktree-remove flow; registered repos get unregistered
+	Stats      gitstats.Stats
 }
 
 // kindRank maps a state.Kind to its sort priority (lower = higher up).

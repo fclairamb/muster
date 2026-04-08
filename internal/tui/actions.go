@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fclairamb/muster/internal/gitstats"
 	"github.com/fclairamb/muster/internal/session"
 	"github.com/fclairamb/muster/internal/state"
 )
@@ -51,6 +52,11 @@ type Deps struct {
 	// after the user detaches from a session that was sitting on
 	// KindReady — the green dot should clear to white once viewed.
 	ClearState func(repoRoot, slug string) error
+
+	// GitStats, when non-nil, is called during refresh to recompute the
+	// per-entry git counts (unpushed / modified / untracked) shown in the
+	// list. Tests typically leave it nil.
+	GitStats func(path string) gitstats.Stats
 }
 
 // BuildWorktreeAddArgs returns the git argv for adding a new worktree.
