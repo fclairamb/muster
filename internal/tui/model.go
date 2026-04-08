@@ -3,6 +3,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -54,7 +55,39 @@ func (m Model) WithDeps(d Deps) Model {
 }
 
 // Init implements tea.Model.
-func (m Model) Init() tea.Cmd { return nil }
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(
+		tickCmd(),
+		tea.SetWindowTitle("ssf: list"),
+	)
+}
+
+// titleListView is the terminal title shown while the user is in the list.
+const titleListView = "ssf: list"
+
+// titleAttached returns the terminal title shown while the user is attached
+// to a session: "<display> (ssf) <emoji>".
+func titleAttached(e Entry) string {
+	emoji := StatusEmoji(e.Kind)
+	if e.Kind == state.KindNone {
+		emoji = StatusEmoji(state.KindIdle) // we're attached → at least idle
+	}
+	return e.Display + " (ssf) " + emoji
+}
+
+// refreshTickMsg fires periodically and triggers a re-read of state from disk
+// for every entry. This is the fallback that keeps status indicators live
+// even when fsnotify events get lost — for example while the program is
+// suspended inside tea.ExecProcess during a tmux attach.
+type refreshTickMsg struct{}
+
+// tickInterval is the polling cadence for the state refresh tick. Exposed
+// as a package var so tests can shorten it.
+var tickInterval = time.Second
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(tickInterval, func(time.Time) tea.Msg { return refreshTickMsg{} })
+}
 
 // StateMsg notifies the model that one entry's session state has changed.
 // Sent from the watcher pump goroutine via program.Send.
@@ -70,8 +103,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case StateMsg:
 		return m.applyStateMsg(msg), nil
+	case refreshTickMsg:
+		return m.applyRefresh(), tickCmd()
 	}
 	return m, nil
+}
+
+// applyRefresh re-reads the on-disk state for every entry and overrides any
+// non-KindNone reading with KindNone if the corresponding tmux session is
+// gone. This is what makes the white "idle" dot disappear once the user
+// quits the underlying claude session.
+func (m Model) applyRefresh() Model {
+	if m.deps.ReadState == nil {
+		return m
+	}
+	for i := range m.entries {
+		k := m.deps.ReadState(m.entries[i].Path, m.entries[i].Slug)
+		if m.deps.Session != nil && k != state.KindNone && !m.deps.Session.Has(m.entries[i].Slug) {
+			k = state.KindNone
+		}
+		m.entries[i].Kind = k
+	}
+	m.entries = SortEntries(m.entries)
+	m.applySearch()
+	return m
 }
 
 func (m Model) applyStateMsg(msg StateMsg) Model {
@@ -247,7 +302,11 @@ func (m Model) actionEnter() (tea.Model, tea.Cmd) {
 	if m.deps.AttachCmdFunc != nil {
 		cmd := m.deps.AttachCmdFunc(entry.Slug)
 		if cmd != nil {
-			return m, tea.ExecProcess(cmd, func(error) tea.Msg { return nil })
+			return m, tea.Sequence(
+				tea.SetWindowTitle(titleAttached(*entry)),
+				tea.ExecProcess(cmd, func(error) tea.Msg { return refreshTickMsg{} }),
+				tea.SetWindowTitle(titleListView),
+			)
 		}
 	}
 	if err := m.deps.Session.Attach(entry.Slug); err != nil {
@@ -367,8 +426,10 @@ func (m Model) View() string {
 	return b.String()
 }
 
-// StatusEmoji maps a state.Kind to its emoji marker. Returns a single space
-// for KindNone so layout stays aligned.
+// StatusEmoji maps a state.Kind to its emoji marker. Returns two spaces for
+// KindNone — the colored emojis above are East-Asian-wide (2 columns), so
+// padding the empty case with two spaces keeps every row's display column
+// aligned regardless of status.
 func StatusEmoji(k state.Kind) string {
 	switch k {
 	case state.KindWaitingInput:
@@ -380,7 +441,7 @@ func StatusEmoji(k state.Kind) string {
 	case state.KindIdle:
 		return "⚪"
 	default:
-		return " "
+		return "  "
 	}
 }
 

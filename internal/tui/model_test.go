@@ -136,6 +136,50 @@ func TestViewRendersEmoji(t *testing.T) {
 	}
 }
 
+func TestRefreshTickReadsState(t *testing.T) {
+	in := []Entry{
+		{Display: "a", Slug: "a", Path: "/a", Kind: state.KindNone, LastOpen: time.Now()},
+	}
+	m := NewModel(in)
+	m.deps.ReadState = func(repoRoot, slug string) state.Kind {
+		return state.KindReady
+	}
+	next := m.applyRefresh()
+	if next.entries[0].Kind != state.KindReady {
+		t.Fatalf("expected ready, got %q", next.entries[0].Kind)
+	}
+}
+
+func TestRefreshOverridesWhenSessionGone(t *testing.T) {
+	in := []Entry{
+		{Display: "a", Slug: "a", Path: "/a", Kind: state.KindIdle, LastOpen: time.Now()},
+	}
+	m := NewModel(in)
+	m.deps.ReadState = func(_, _ string) state.Kind { return state.KindIdle }
+	// Session manager that reports no session.
+	m.deps.Session = &nullSession{}
+	next := m.applyRefresh()
+	if next.entries[0].Kind != state.KindNone {
+		t.Fatalf("expected KindNone (session gone), got %q", next.entries[0].Kind)
+	}
+}
+
+// nullSession reports no sessions and no-ops every method.
+type nullSession struct{}
+
+func (nullSession) Start(slug, cwd string) error { return nil }
+func (nullSession) Has(slug string) bool         { return false }
+func (nullSession) Attach(slug string) error     { return nil }
+func (nullSession) Kill(slug string) error       { return nil }
+func (nullSession) List() ([]string, error)      { return nil, nil }
+
+func TestStatusEmojiNonePadsToEmojiWidth(t *testing.T) {
+	none := StatusEmoji(state.KindNone)
+	if len(none) != 2 {
+		t.Fatalf("KindNone emoji should be 2 spaces, got %q", none)
+	}
+}
+
 func TestStateMsgUpdatesEntryAndResorts(t *testing.T) {
 	// Two entries, both currently with no instance.
 	in := []Entry{

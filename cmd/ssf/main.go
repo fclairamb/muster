@@ -250,7 +250,11 @@ func buildEntries(reg *registry.Registry) ([]tui.Entry, error) {
 }
 
 func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Entry) error {
+	cfg, _ := reg.Load()
+
 	tmux := session.NewTmux()
+	tmux.ClaudeArgs = cfg.Settings.ResolveClaudeArgs()
+
 	deps := tui.Deps{
 		Session: tmux,
 		Git:     realGit{},
@@ -261,8 +265,11 @@ func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Ent
 		Unregister: func(path string) error {
 			return unregister(reg, path)
 		},
+		ReadState: func(repoRoot, slug string) state.Kind {
+			st, _ := state.Read(repoRoot, slug)
+			return st.Kind
+		},
 	}
-	cfg, _ := reg.Load()
 	deps.FileManager = cfg.Settings.ResolveFileManager()
 	deps.Editor = cfg.Settings.ResolveEditor()
 

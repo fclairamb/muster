@@ -29,9 +29,10 @@ func claudeBinary() string {
 }
 
 // buildStartArgs returns the argv for spawning a detached tmux session that
-// runs the given claude binary in cwd.
-func buildStartArgs(slug, cwd, binary string) []string {
-	return []string{
+// runs the given claude binary in cwd, optionally followed by extra args
+// (e.g. --dangerously-skip-permissions) passed straight through to claude.
+func buildStartArgs(slug, cwd, binary string, claudeArgs []string) []string {
+	args := []string{
 		"-L", SocketName,
 		"new-session",
 		"-d",
@@ -39,6 +40,8 @@ func buildStartArgs(slug, cwd, binary string) []string {
 		"-c", cwd,
 		binary,
 	}
+	args = append(args, claudeArgs...)
+	return args
 }
 
 // buildAttachArgs returns the argv to attach to an existing session.

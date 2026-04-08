@@ -9,9 +9,13 @@ import (
 )
 
 // Tmux is the real Manager implementation backed by tmux on a dedicated socket.
-type Tmux struct{}
+type Tmux struct {
+	// ClaudeArgs are appended to the claude binary when starting a new
+	// session. nil means "no extra args".
+	ClaudeArgs []string
+}
 
-// NewTmux returns a new tmux Manager.
+// NewTmux returns a new tmux Manager with no extra claude args.
 func NewTmux() *Tmux { return &Tmux{} }
 
 func runTmux(args ...string) (string, error) {
@@ -28,11 +32,11 @@ func runTmux(args ...string) (string, error) {
 
 // Start spawns a detached tmux session running claude in cwd. No-op if it
 // already exists.
-func (Tmux) Start(slug, cwd string) error {
-	if (Tmux{}).Has(slug) {
+func (t Tmux) Start(slug, cwd string) error {
+	if t.Has(slug) {
 		return nil
 	}
-	_, err := runTmux(buildStartArgs(slug, cwd, claudeBinary())...)
+	_, err := runTmux(buildStartArgs(slug, cwd, claudeBinary(), t.ClaudeArgs)...)
 	return err
 }
 

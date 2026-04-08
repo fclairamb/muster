@@ -97,6 +97,31 @@ func TestSettingsConfigOverridesEnv(t *testing.T) {
 	}
 }
 
+func TestResolveClaudeArgsDefault(t *testing.T) {
+	s := Settings{}
+	got := s.ResolveClaudeArgs()
+	if len(got) != 1 || got[0] != "--dangerously-skip-permissions" {
+		t.Fatalf("default = %v", got)
+	}
+}
+
+func TestResolveClaudeArgsExplicitEmpty(t *testing.T) {
+	empty := []string{}
+	s := Settings{ClaudeArgs: &empty}
+	if got := s.ResolveClaudeArgs(); len(got) != 0 {
+		t.Fatalf("expected empty, got %v", got)
+	}
+}
+
+func TestResolveClaudeArgsCustom(t *testing.T) {
+	custom := []string{"--foo", "--bar"}
+	s := Settings{ClaudeArgs: &custom}
+	got := s.ResolveClaudeArgs()
+	if len(got) != 2 || got[0] != "--foo" || got[1] != "--bar" {
+		t.Fatalf("got %v", got)
+	}
+}
+
 func TestSettingsEnvFallback(t *testing.T) {
 	t.Setenv("FILE_MANAGER", "ranger")
 	t.Setenv("EDITOR", "vi")

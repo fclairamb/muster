@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/fclairamb/ssf/internal/session"
+	"github.com/fclairamb/ssf/internal/state"
 )
 
 // GitRunner abstracts git command execution so tests can record calls.
@@ -38,6 +39,12 @@ type Deps struct {
 	// drops it from the registry and uninstalls its Claude Code hooks.
 	// Without this, removed entries reappear on the next launch.
 	Unregister func(path string) error
+
+	// ReadState reads the current state for one entry from disk. Used by
+	// the periodic refresh tick to keep the rendered status in sync even
+	// when the watcher's events are missed (e.g. during a tea.ExecProcess
+	// suspension while the user is attached to a tmux session).
+	ReadState func(repoRoot, slug string) state.Kind
 }
 
 // BuildWorktreeAddArgs returns the git argv for adding a new worktree.

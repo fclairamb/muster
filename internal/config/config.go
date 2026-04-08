@@ -27,6 +27,12 @@ type Settings struct {
 	FileManager  string            `toml:"file_manager"`
 	Editor       string            `toml:"editor"`
 	OrgOverrides map[string]string `toml:"org_overrides"`
+
+	// ClaudeArgs are the extra arguments passed to the claude binary every
+	// time ssf launches a new tmux session. nil (unset) → use the default
+	// of {"--dangerously-skip-permissions"}. An explicit empty array in
+	// the config file means "no extra args".
+	ClaudeArgs *[]string `toml:"claude_args"`
 }
 
 // DefaultPath returns the location of the config file, honoring XDG_CONFIG_HOME.
@@ -94,6 +100,16 @@ func (s Settings) ResolveFileManager() string {
 		return v
 	}
 	return "open"
+}
+
+// ResolveClaudeArgs returns the configured claude args, defaulting to
+// --dangerously-skip-permissions when unset. An explicitly-empty list in the
+// config file is honored as "no extra args".
+func (s Settings) ResolveClaudeArgs() []string {
+	if s.ClaudeArgs == nil {
+		return []string{"--dangerously-skip-permissions"}
+	}
+	return *s.ClaudeArgs
 }
 
 // ResolveEditor returns the configured editor, falling back to $VISUAL, $EDITOR, then "zed".
