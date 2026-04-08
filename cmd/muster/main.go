@@ -65,6 +65,7 @@ func init() {
 }
 
 func main() {
+	autoMigrateIfNeeded()
 	if err := newApp().Run(context.Background(), os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, "muster:", err)
 		os.Exit(1)
@@ -87,6 +88,7 @@ func newApp() *cli.Command {
 			listCommand(),
 			rmCommand(),
 			versionCommand(),
+			migrateCommand(),
 			hookCommand(),
 			filesCommand(),
 		},
