@@ -50,7 +50,7 @@ var errAmbiguous = errors.New("ambiguous: multiple entries matched")
 
 func runRm(ctx context.Context, cmd *cli.Command) error {
 	if cmd.Args().Len() != 1 {
-		return fmt.Errorf("usage: ssf rm <path-or-slug>")
+		return fmt.Errorf("usage: muster rm <path-or-slug>")
 	}
 	arg := cmd.Args().First()
 
@@ -123,7 +123,7 @@ func resolveTarget(dirs []config.Dir, arg string) (string, error) {
 }
 
 // unregister is the shared registered-dir removal path used by both the TUI's
-// `r` action and the `ssf rm` subcommand.
+// `r` action and the `muster rm` subcommand.
 //
 // Symlink-tolerant: if path doesn't directly match any registered entry,
 // fall back to comparing canonicalized (EvalSymlinks) forms. This handles

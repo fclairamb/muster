@@ -36,7 +36,7 @@ func TestTmuxLifecycle(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux missing")
 	}
-	t.Setenv("SSF_CLAUDE_BINARY", writeFakeClaude(t))
+	t.Setenv("MUSTER_CLAUDE_BINARY", writeFakeClaude(t))
 
 	m := NewTmux()
 	slug := randSlug(t)

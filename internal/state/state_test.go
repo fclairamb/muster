@@ -19,7 +19,7 @@ func TestReadMissingReturnsNone(t *testing.T) {
 
 func TestWriteReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	in := State{Kind: KindReady, Ts: time.Now().UTC().Truncate(time.Second), Session: "ssf-abc"}
+	in := State{Kind: KindReady, Ts: time.Now().UTC().Truncate(time.Second), Session: "muster-abc"}
 	if err := Write(dir, "abc", in); err != nil {
 		t.Fatalf("write: %v", err)
 	}

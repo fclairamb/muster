@@ -55,12 +55,12 @@ type Deps struct {
 
 // BuildWorktreeAddArgs returns the git argv for adding a new worktree.
 //
-// The new worktree lives at <repo>/.ssf/worktrees/<repo>-<branch-slug> and
+// The new worktree lives at <repo>/.muster/worktrees/<repo>-<branch-slug> and
 // branches off <branch> from HEAD.
 func BuildWorktreeAddArgs(repo, branch string) []string {
 	slug := slugifyBranch(branch)
 	base := filepath.Base(repo)
-	target := filepath.Join(repo, ".ssf", "worktrees", base+"-"+slug)
+	target := filepath.Join(repo, ".muster", "worktrees", base+"-"+slug)
 	return []string{"-C", repo, "worktree", "add", target, "-b", branch}
 }
 
@@ -78,8 +78,8 @@ func BuildWorktreeRemoveArgs(worktreePath string, force bool) []string {
 var ErrInvalidBranchName = errors.New("invalid branch name")
 
 // ValidateBranchName rejects empty input, whitespace, and path-escape sequences.
-// It is intentionally stricter than git itself; ssf is the gatekeeper for the
-// .ssf/worktrees directory layout.
+// It is intentionally stricter than git itself; muster is the gatekeeper for the
+// .muster/worktrees directory layout.
 func ValidateBranchName(name string) error {
 	if name == "" {
 		return ErrInvalidBranchName
