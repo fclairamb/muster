@@ -66,6 +66,7 @@ func (t Tmux) Start(slug, cwd string) error {
 		if _, err := runTmux(buildStartArgs(slug, cwd, claudeBinary(), t.ClaudeArgs)...); err != nil {
 			return err
 		}
+		disableMouse(slug)
 	}
 	if !t.shouldSplit() {
 		return nil
@@ -116,8 +117,23 @@ func (t Tmux) StartShell(slug, cwd string) error {
 	if t.Has(slug) {
 		return nil
 	}
-	_, err := runTmux(buildStartArgs(slug, cwd, shellBinary(), nil)...)
-	return err
+	if _, err := runTmux(buildStartArgs(slug, cwd, shellBinary(), nil)...); err != nil {
+		return err
+	}
+	disableMouse(slug)
+	return nil
+}
+
+// disableMouse turns off tmux's mouse mode for the given session. With
+// mouse mode on (the default in many .tmux.conf setups), tmux intercepts
+// scroll-wheel events and translates them into cursor up/down keypresses
+// for any program that doesn't itself opt into the mouse protocol. That
+// hijacks the terminal emulator's native scrollback inside claude and
+// shell sessions, which is exactly what we don't want. Setting mouse off
+// per-session restores native scrollback in iTerm/Kitty/Alacritty/etc.
+// without touching the user's other tmux sessions on a different socket.
+func disableMouse(slug string) {
+	_, _ = runTmux("-L", SocketName, "set-option", "-t", SessionPrefix+slug, "mouse", "off")
 }
 
 func (t Tmux) shouldSplit() bool {

@@ -120,6 +120,18 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	if cmd.Args().Len() > 1 {
 		return fmt.Errorf("expected at most one directory argument")
 	}
+	// Refuse to launch the TUI from inside a tmux session. muster spawns
+	// each claude instance in its own tmux session on the dedicated `-L
+	// muster` socket and uses tea.ExecProcess to attach; nesting that
+	// inside another tmux session breaks attach/detach and confuses the
+	// status hooks. Detection is the standard $TMUX env var, set by tmux
+	// itself for any process spawned inside a session. Subcommands like
+	// `muster files` (the side panel runs INSIDE the muster tmux session
+	// — that's the whole point) and `muster hook write` are unaffected
+	// because the check only runs in this Action.
+	if os.Getenv("TMUX") != "" {
+		return fmt.Errorf("muster cannot run inside a tmux session — detach (Ctrl+b d) and try again from a plain terminal")
+	}
 
 	cfgPath, err := config.DefaultPath()
 	if err != nil {
