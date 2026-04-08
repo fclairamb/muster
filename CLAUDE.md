@@ -91,13 +91,13 @@ assert on the resulting model + its recorded fake calls.
 calling `program.Send(tui.RefreshMsg{})`). For each entry it:
 
 1. Calls `deps.ReadState(repoRoot, slug)` to get the on-disk State.
-2. Calls `decayStale(state, now)` which collapses `working`/`waiting_input`
-   states older than `StaleThreshold` (30s) to `idle`. `ready` and `idle`
-   don't decay — they're stable resting states.
-3. Batches `deps.Session.List()` once per tick and builds a slug set for
+2. Batches `deps.Session.List()` once per tick and builds a slug set for
    membership checks.
-4. Applies the reconciliation rules:
-   - session present + state file says X → X (after decay)
+3. Applies the reconciliation rules:
+   - session present + state file says X → X (the on-disk state is trusted
+     as-is while the session is alive — earlier versions decayed
+     `working`/`waiting_input` after 30s, which incorrectly flipped long
+     turns to white; the user can press `x` if a hook ever wedges)
    - session present + no state file → **idle** (we have a session, claude
      hasn't fired any hook yet, default to idle)
    - session absent → **none**, regardless of any stale state file

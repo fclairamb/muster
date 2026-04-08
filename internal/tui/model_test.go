@@ -165,7 +165,11 @@ func TestRefreshOverridesWhenSessionGone(t *testing.T) {
 	}
 }
 
-func TestRefreshDecaysStaleWorking(t *testing.T) {
+func TestRefreshKeepsOldWorkingWhileSessionAlive(t *testing.T) {
+	// Long Claude turns easily exceed any small staleness window. As long
+	// as the tmux session is alive, an old "working" state file must keep
+	// the row yellow — earlier versions decayed it to idle (white), which
+	// silently masked active work and is the bug this test guards against.
 	in := []Entry{
 		{Display: "a", Slug: "a", Path: "/a", Kind: state.KindNone, LastOpen: time.Now()},
 	}
@@ -175,8 +179,8 @@ func TestRefreshDecaysStaleWorking(t *testing.T) {
 	}
 	m.deps.Session = liveSession{alive: []string{"a"}}
 	next := m.applyRefresh()
-	if next.entries[0].Kind != state.KindIdle {
-		t.Fatalf("expected stale working to decay to idle, got %q", next.entries[0].Kind)
+	if next.entries[0].Kind != state.KindWorking {
+		t.Fatalf("expected old working to stay yellow while session alive, got %q", next.entries[0].Kind)
 	}
 }
 

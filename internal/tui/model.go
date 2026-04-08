@@ -4,7 +4,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -339,12 +338,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// StaleThreshold is the age beyond which a "working" or "waiting_input"
-// state is treated as idle. Without this, a state file that was written
-// during a working turn but never updated by a Stop hook keeps the bubble
-// stuck on yellow forever.
-var StaleThreshold = 30 * time.Second
-
 // Refresh re-reads on-disk state for every entry and reconciles it with
 // the live tmux session set. Exposed publicly so main.go can call it once
 // before program.Run() to ensure the very first frame is correct.
@@ -354,7 +347,15 @@ var StaleThreshold = 30 * time.Second
 //   - tmux session present + state file says X    → X
 //   - tmux session present + no state file (None) → KindIdle (claude is
 //     running but hasn't fired any hook yet)
-//   - tmux session absent → KindNone, regardless of stale state file
+//   - tmux session absent → KindNone, regardless of any state file
+//
+// While the session is alive we trust the on-disk state file as-is.
+// Earlier versions decayed "working" / "waiting_input" to idle after 30
+// seconds, on the theory that a stuck hook should not keep the row
+// yellow forever. In practice that decay was the wrong call: long Claude
+// turns frequently exceed 30s and the row would flip to white while
+// Claude was still actively working. The correct fix is to trust the
+// hook system; if it ever wedges the user can press `x` to clean up.
 func (m Model) Refresh() Model { return m.applyRefresh() }
 
 func (m Model) applyRefresh() Model {
@@ -369,7 +370,6 @@ func (m Model) applyRefresh() Model {
 			running[s] = struct{}{}
 		}
 	}
-	now := time.Now()
 	for i := range m.entries {
 		slug := m.entries[i].Slug
 		root := m.entries[i].RepoRoot
@@ -377,7 +377,7 @@ func (m Model) applyRefresh() Model {
 			root = m.entries[i].Path
 		}
 		st := m.deps.ReadState(root, slug)
-		k := decayStale(st, now)
+		k := st.Kind
 		if running != nil {
 			if _, alive := running[slug]; alive {
 				if k == state.KindNone {
@@ -392,21 +392,6 @@ func (m Model) applyRefresh() Model {
 	m.entries = SortEntries(m.entries)
 	m.applySearch()
 	return m
-}
-
-// decayStale collapses stale "working" / "waiting_input" states into idle.
-// "ready" and "idle" don't decay because they're stable resting states.
-func decayStale(st state.State, now time.Time) state.Kind {
-	if st.Kind != state.KindWorking && st.Kind != state.KindWaitingInput {
-		return st.Kind
-	}
-	if st.Ts.IsZero() {
-		return state.KindIdle
-	}
-	if now.Sub(st.Ts) > StaleThreshold {
-		return state.KindIdle
-	}
-	return st.Kind
 }
 
 func (m Model) applyStateMsg(msg StateMsg) Model {
