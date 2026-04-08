@@ -321,7 +321,7 @@ func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Ent
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	if ch, err := watcher.Watch(ctx, repoRoots); err == nil {
-		notifier := notify.OsascriptNotifier{}
+		notifier := notify.NewBest()
 		dispatcher := notify.NewDispatcher(notifier, displayNameLookup(entries))
 		go func() {
 			for ev := range ch {
