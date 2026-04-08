@@ -73,6 +73,26 @@ func Install(repoRoot, slug string) error {
 	return saveSettings(repoRoot, settings)
 }
 
+// UninstallLegacy strips any leftover hook entries whose command starts with
+// "ssf hook write " — the literal used by the project's previous name. Used
+// by `muster migrate` to scrub legacy installations before re-installing the
+// new commands. Independent of slug.
+func UninstallLegacy(repoRoot string) error {
+	settings, err := loadSettings(repoRoot)
+	if err != nil {
+		return err
+	}
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hooks == nil {
+		return nil
+	}
+	for _, ev := range hookEvents {
+		removeHookByPrefix(hooks, ev.Event, "ssf hook write ")
+	}
+	settings["hooks"] = hooks
+	return saveSettings(repoRoot, settings)
+}
+
 // Uninstall removes only the entries whose command matches our slug.
 func Uninstall(repoRoot, slug string) error {
 	settings, err := loadSettings(repoRoot)
@@ -166,6 +186,37 @@ func appendHook(hooksMap map[string]any, event, matcher, cmd string) {
 	}
 	entries = append(entries, entry)
 	hooksMap[event] = entries
+}
+
+// removeHookByPrefix drops any inner hook whose command starts with the
+// given prefix string. Used both for slug-scoped removal (Uninstall) and
+// legacy cleanup (UninstallLegacy).
+func removeHookByPrefix(hooksMap map[string]any, event, prefix string) {
+	entries, _ := hooksMap[event].([]any)
+	out := entries[:0]
+	for _, e := range entries {
+		em, _ := e.(map[string]any)
+		inner, _ := em["hooks"].([]any)
+		filtered := inner[:0]
+		for _, h := range inner {
+			hm, _ := h.(map[string]any)
+			c, _ := hm["command"].(string)
+			if strings.HasPrefix(c, prefix) {
+				continue
+			}
+			filtered = append(filtered, h)
+		}
+		if len(filtered) == 0 {
+			continue
+		}
+		em["hooks"] = filtered
+		out = append(out, em)
+	}
+	if len(out) == 0 {
+		delete(hooksMap, event)
+		return
+	}
+	hooksMap[event] = out
 }
 
 // removeHook drops any inner hook whose command contains
