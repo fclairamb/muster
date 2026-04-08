@@ -273,7 +273,9 @@ func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Ent
 	deps.FileManager = cfg.Settings.ResolveFileManager()
 	deps.Editor = cfg.Settings.ResolveEditor()
 
-	model := tui.NewModel(entries).WithDeps(deps)
+	// Refresh once before launching so the initial frame reflects the live
+	// tmux session set instead of any stale state file from a previous run.
+	model := tui.NewModel(entries).WithDeps(deps).Refresh()
 	program := tea.NewProgram(model, tea.WithAltScreen())
 
 	repoRoots := make([]string, 0, len(entries))

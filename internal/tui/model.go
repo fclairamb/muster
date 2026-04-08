@@ -84,7 +84,7 @@ type refreshTickMsg struct{}
 
 // tickInterval is the polling cadence for the state refresh tick. Exposed
 // as a package var so tests can shorten it.
-var tickInterval = time.Second
+var tickInterval = 500 * time.Millisecond
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(tickInterval, func(time.Time) tea.Msg { return refreshTickMsg{} })
@@ -110,18 +110,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// applyRefresh re-reads the on-disk state for every entry and overrides any
-// non-KindNone reading with KindNone if the corresponding tmux session is
-// gone. This is what makes the white "idle" dot disappear once the user
-// quits the underlying claude session.
+// Refresh re-reads on-disk state for every entry and reconciles it with
+// the live tmux session set. Exposed publicly so main.go can call it once
+// before program.Run() to ensure the very first frame is correct.
+//
+// Reconciliation rules:
+//
+//   - tmux session present + state file says X    → X
+//   - tmux session present + no state file (None) → KindIdle (claude is
+//     running but hasn't fired any hook yet)
+//   - tmux session absent → KindNone, regardless of stale state file
+func (m Model) Refresh() Model { return m.applyRefresh() }
+
 func (m Model) applyRefresh() Model {
 	if m.deps.ReadState == nil {
 		return m
 	}
+	var running map[string]struct{}
+	if m.deps.Session != nil {
+		list, _ := m.deps.Session.List()
+		running = make(map[string]struct{}, len(list))
+		for _, s := range list {
+			running[s] = struct{}{}
+		}
+	}
 	for i := range m.entries {
-		k := m.deps.ReadState(m.entries[i].Path, m.entries[i].Slug)
-		if m.deps.Session != nil && k != state.KindNone && !m.deps.Session.Has(m.entries[i].Slug) {
-			k = state.KindNone
+		slug := m.entries[i].Slug
+		k := m.deps.ReadState(m.entries[i].Path, slug)
+		if running != nil {
+			if _, alive := running[slug]; alive {
+				if k == state.KindNone {
+					k = state.KindIdle
+				}
+			} else {
+				k = state.KindNone
+			}
 		}
 		m.entries[i].Kind = k
 	}

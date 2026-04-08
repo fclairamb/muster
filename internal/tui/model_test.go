@@ -173,6 +173,35 @@ func (nullSession) Attach(slug string) error     { return nil }
 func (nullSession) Kill(slug string) error       { return nil }
 func (nullSession) List() ([]string, error)      { return nil, nil }
 
+// liveSession reports a fixed set of running slugs.
+type liveSession struct{ alive []string }
+
+func (l liveSession) Start(slug, cwd string) error { return nil }
+func (l liveSession) Has(slug string) bool {
+	for _, s := range l.alive {
+		if s == slug {
+			return true
+		}
+	}
+	return false
+}
+func (l liveSession) Attach(slug string) error { return nil }
+func (l liveSession) Kill(slug string) error   { return nil }
+func (l liveSession) List() ([]string, error)  { return l.alive, nil }
+
+func TestRefreshInfersIdleWhenSessionLiveButNoState(t *testing.T) {
+	in := []Entry{
+		{Display: "a", Slug: "a", Path: "/a", Kind: state.KindNone, LastOpen: time.Now()},
+	}
+	m := NewModel(in)
+	m.deps.ReadState = func(_, _ string) state.Kind { return state.KindNone }
+	m.deps.Session = liveSession{alive: []string{"a"}}
+	next := m.applyRefresh()
+	if next.entries[0].Kind != state.KindIdle {
+		t.Fatalf("expected KindIdle inferred from live session, got %q", next.entries[0].Kind)
+	}
+}
+
 func TestStatusEmojiNonePadsToEmojiWidth(t *testing.T) {
 	none := StatusEmoji(state.KindNone)
 	if len(none) != 2 {
