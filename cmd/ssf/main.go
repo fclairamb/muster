@@ -124,6 +124,7 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
+	var autoAttachSlug string
 	if target := cmd.Args().First(); target != "" {
 		abs, err := filepath.Abs(target)
 		if err != nil {
@@ -139,11 +140,20 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		if err := reg.Add(abs); err != nil {
 			return fmt.Errorf("register dir: %w", err)
 		}
+		// Install hooks at the repo root (where claude reads
+		// .claude/settings.json) but key them by the registered path's
+		// slug. This makes a registered subdir a distinct entry from its
+		// parent repo.
 		if info, err := repoinfo.Inspect(abs); err == nil {
-			if err := hooks.Install(info.RepoRoot, slug.Slug(info.RepoRoot)); err != nil {
+			repoRoot := info.RepoRoot
+			if repoRoot == "" {
+				repoRoot = abs
+			}
+			if err := hooks.Install(repoRoot, slug.Slug(abs)); err != nil {
 				slog.Warn("install hooks", "err", err)
 			}
 		}
+		autoAttachSlug = slug.Slug(abs)
 	}
 
 	entries, err := buildEntries(reg)
@@ -152,7 +162,7 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	if isTerminal(os.Stdout) {
-		return launchTUI(ctx, reg, entries)
+		return launchTUI(ctx, reg, entries, autoAttachSlug)
 	}
 	for _, e := range entries {
 		fmt.Fprintln(os.Stdout, e.Display)
@@ -233,11 +243,18 @@ func buildEntries(reg *registry.Registry) ([]tui.Entry, error) {
 
 	entries := make([]tui.Entry, 0, len(dirs))
 	for i, d := range dirs {
-		s := slug.Slug(infos[i].RepoRoot)
-		st, _ := state.Read(infos[i].RepoRoot, s)
+		// Slug is derived from the *registered* path, not the repo root.
+		// This makes subdirs distinct entries from their parent repo.
+		s := slug.Slug(d.Path)
+		repoRoot := infos[i].RepoRoot
+		if repoRoot == "" {
+			repoRoot = d.Path
+		}
+		st, _ := state.Read(repoRoot, s)
 		entries = append(entries, tui.Entry{
 			Display:  render.Line(d, infos[i], prefixes[infos[i].Org]),
-			Path:     infos[i].RepoRoot,
+			Path:     d.Path,
+			RepoRoot: repoRoot,
 			Slug:     s,
 			Kind:     st.Kind,
 			LastOpen: d.LastOpened,
@@ -249,7 +266,7 @@ func buildEntries(reg *registry.Registry) ([]tui.Entry, error) {
 	return entries, nil
 }
 
-func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Entry) error {
+func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Entry, autoAttachSlug string) error {
 	cfg, _ := reg.Load()
 
 	tmux := session.NewTmux()
@@ -265,9 +282,9 @@ func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Ent
 		Unregister: func(path string) error {
 			return unregister(reg, path)
 		},
-		ReadState: func(repoRoot, slug string) state.Kind {
+		ReadState: func(repoRoot, slug string) state.State {
 			st, _ := state.Read(repoRoot, slug)
-			return st.Kind
+			return st
 		},
 	}
 	deps.FileManager = cfg.Settings.ResolveFileManager()
@@ -276,12 +293,23 @@ func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Ent
 	// Refresh once before launching so the initial frame reflects the live
 	// tmux session set instead of any stale state file from a previous run.
 	model := tui.NewModel(entries).WithDeps(deps).Refresh()
+	if autoAttachSlug != "" {
+		model = model.WithAutoAttach(autoAttachSlug)
+	}
 	program := tea.NewProgram(model, tea.WithAltScreen())
 
-	repoRoots := make([]string, 0, len(entries))
+	rootSet := make(map[string]bool)
 	for _, e := range entries {
-		repoRoots = append(repoRoots, e.Path)
-		_ = os.MkdirAll(state.DirPath(e.Path), 0o755)
+		root := e.RepoRoot
+		if root == "" {
+			root = e.Path
+		}
+		rootSet[root] = true
+		_ = os.MkdirAll(state.DirPath(root), 0o755)
+	}
+	repoRoots := make([]string, 0, len(rootSet))
+	for r := range rootSet {
+		repoRoots = append(repoRoots, r)
 	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -295,6 +323,22 @@ func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Ent
 			}
 		}()
 	}
+
+	// Background refresh: every second, push a RefreshMsg into the program.
+	// tea.Tick can get lost across tea.ExecProcess suspensions; program.Send
+	// always reaches the model on resume.
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				program.Send(tui.RefreshMsg{})
+			}
+		}
+	}()
 
 	_, err := program.Run()
 	return err

@@ -136,13 +136,13 @@ func TestViewRendersEmoji(t *testing.T) {
 	}
 }
 
-func TestRefreshTickReadsState(t *testing.T) {
+func TestRefreshReadsState(t *testing.T) {
 	in := []Entry{
 		{Display: "a", Slug: "a", Path: "/a", Kind: state.KindNone, LastOpen: time.Now()},
 	}
 	m := NewModel(in)
-	m.deps.ReadState = func(repoRoot, slug string) state.Kind {
-		return state.KindReady
+	m.deps.ReadState = func(repoRoot, slug string) state.State {
+		return state.State{Kind: state.KindReady, Ts: time.Now()}
 	}
 	next := m.applyRefresh()
 	if next.entries[0].Kind != state.KindReady {
@@ -155,12 +155,58 @@ func TestRefreshOverridesWhenSessionGone(t *testing.T) {
 		{Display: "a", Slug: "a", Path: "/a", Kind: state.KindIdle, LastOpen: time.Now()},
 	}
 	m := NewModel(in)
-	m.deps.ReadState = func(_, _ string) state.Kind { return state.KindIdle }
-	// Session manager that reports no session.
+	m.deps.ReadState = func(_, _ string) state.State {
+		return state.State{Kind: state.KindIdle, Ts: time.Now()}
+	}
 	m.deps.Session = &nullSession{}
 	next := m.applyRefresh()
 	if next.entries[0].Kind != state.KindNone {
 		t.Fatalf("expected KindNone (session gone), got %q", next.entries[0].Kind)
+	}
+}
+
+func TestRefreshDecaysStaleWorking(t *testing.T) {
+	in := []Entry{
+		{Display: "a", Slug: "a", Path: "/a", Kind: state.KindNone, LastOpen: time.Now()},
+	}
+	m := NewModel(in)
+	m.deps.ReadState = func(_, _ string) state.State {
+		return state.State{Kind: state.KindWorking, Ts: time.Now().Add(-5 * time.Minute)}
+	}
+	m.deps.Session = liveSession{alive: []string{"a"}}
+	next := m.applyRefresh()
+	if next.entries[0].Kind != state.KindIdle {
+		t.Fatalf("expected stale working to decay to idle, got %q", next.entries[0].Kind)
+	}
+}
+
+func TestRefreshKeepsFreshWorking(t *testing.T) {
+	in := []Entry{
+		{Display: "a", Slug: "a", Path: "/a", Kind: state.KindNone, LastOpen: time.Now()},
+	}
+	m := NewModel(in)
+	m.deps.ReadState = func(_, _ string) state.State {
+		return state.State{Kind: state.KindWorking, Ts: time.Now()}
+	}
+	m.deps.Session = liveSession{alive: []string{"a"}}
+	next := m.applyRefresh()
+	if next.entries[0].Kind != state.KindWorking {
+		t.Fatalf("expected fresh working to stay, got %q", next.entries[0].Kind)
+	}
+}
+
+func TestRefreshDoesNotDecayReady(t *testing.T) {
+	in := []Entry{
+		{Display: "a", Slug: "a", Path: "/a", Kind: state.KindNone, LastOpen: time.Now()},
+	}
+	m := NewModel(in)
+	m.deps.ReadState = func(_, _ string) state.State {
+		return state.State{Kind: state.KindReady, Ts: time.Now().Add(-time.Hour)}
+	}
+	m.deps.Session = liveSession{alive: []string{"a"}}
+	next := m.applyRefresh()
+	if next.entries[0].Kind != state.KindReady {
+		t.Fatalf("ready should not decay, got %q", next.entries[0].Kind)
 	}
 }
 
@@ -194,7 +240,7 @@ func TestRefreshInfersIdleWhenSessionLiveButNoState(t *testing.T) {
 		{Display: "a", Slug: "a", Path: "/a", Kind: state.KindNone, LastOpen: time.Now()},
 	}
 	m := NewModel(in)
-	m.deps.ReadState = func(_, _ string) state.Kind { return state.KindNone }
+	m.deps.ReadState = func(_, _ string) state.State { return state.State{Kind: state.KindNone} }
 	m.deps.Session = liveSession{alive: []string{"a"}}
 	next := m.applyRefresh()
 	if next.entries[0].Kind != state.KindIdle {

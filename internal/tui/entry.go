@@ -11,10 +11,16 @@ import (
 // subdir of a repo, or a worktree under a repo. Indent controls vertical
 // nesting in the rendered list.
 type Entry struct {
-	Display    string
-	Indent     int
-	Kind       state.Kind
-	Path       string
+	Display string
+	Indent  int
+	Kind    state.Kind
+	// Path is the *registered* path. May be a subdir of a repo. Used as
+	// the tmux session cwd, file-manager target, and registry key.
+	Path string
+	// RepoRoot is the git repo root that contains Path (or Path itself
+	// for non-git dirs). State files live under RepoRoot/.ssf/state and
+	// hooks are installed at RepoRoot/.claude/settings.json.
+	RepoRoot   string
 	Slug       string
 	LastOpen   time.Time
 	IsWorktree bool // worktrees get the git-worktree-remove flow; registered repos get unregistered

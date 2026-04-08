@@ -37,9 +37,21 @@ type Model struct {
 
 	quitting bool
 
+	// autoAttachSlug, if non-empty, makes Init emit an AttachMsg that
+	// attaches to that slug as if the user had pressed Enter on it.
+	autoAttachSlug string
+
 	// Recording fields used by tests/main to learn what the model wants to do.
 	pendingAttach string // slug to attach via tea.ExecProcess
 	lastError     string
+}
+
+// WithAutoAttach makes the next Init() emit an AttachMsg targeting slug.
+// Used by `ssf <dir>` to immediately drop the user into claude for the
+// directory they just registered.
+func (m Model) WithAutoAttach(slug string) Model {
+	m.autoAttachSlug = slug
+	return m
 }
 
 // NewModel constructs a Model from raw entries (will be sorted).
@@ -56,10 +68,12 @@ func (m Model) WithDeps(d Deps) Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
-		tickCmd(),
-		tea.SetWindowTitle("ssf: list"),
-	)
+	cmds := []tea.Cmd{tea.SetWindowTitle("ssf: list")}
+	if m.autoAttachSlug != "" {
+		slug := m.autoAttachSlug
+		cmds = append(cmds, func() tea.Msg { return AttachMsg{Slug: slug} })
+	}
+	return tea.Batch(cmds...)
 }
 
 // titleListView is the terminal title shown while the user is in the list.
@@ -76,19 +90,16 @@ func titleAttached(e Entry) string {
 	return e.Display + " " + emoji
 }
 
-// refreshTickMsg fires periodically and triggers a re-read of state from disk
-// for every entry. This is the fallback that keeps status indicators live
-// even when fsnotify events get lost — for example while the program is
-// suspended inside tea.ExecProcess during a tmux attach.
-type refreshTickMsg struct{}
+// RefreshMsg triggers a re-read of state from disk for every entry. The
+// message is exported so cmd/ssf can drive the refresh from a background
+// goroutine via program.Send — more reliable than tea.Tick across
+// ExecProcess suspensions.
+type RefreshMsg struct{}
 
-// tickInterval is the polling cadence for the state refresh tick. Exposed
-// as a package var so tests can shorten it.
-var tickInterval = 500 * time.Millisecond
-
-func tickCmd() tea.Cmd {
-	return tea.Tick(tickInterval, func(time.Time) tea.Msg { return refreshTickMsg{} })
-}
+// AttachMsg is a request to attach to the claude session for a given slug,
+// emitted programmatically (not from a key press). Used to auto-attach when
+// ssf is invoked with a directory argument.
+type AttachMsg struct{ Slug string }
 
 // StateMsg notifies the model that one entry's session state has changed.
 // Sent from the watcher pump goroutine via program.Send.
@@ -104,11 +115,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case StateMsg:
 		return m.applyStateMsg(msg), nil
-	case refreshTickMsg:
-		return m.applyRefresh(), tickCmd()
+	case RefreshMsg:
+		return m.applyRefresh(), nil
+	case AttachMsg:
+		// Move the cursor to the requested entry, then fall through to
+		// the same actionEnter path used by the Enter key.
+		for i, e := range m.filtered {
+			if e.Slug == msg.Slug {
+				m.cursor = i
+				return m.actionEnter()
+			}
+		}
+		return m, nil
 	}
 	return m, nil
 }
+
+// StaleThreshold is the age beyond which a "working" or "waiting_input"
+// state is treated as idle. Without this, a state file that was written
+// during a working turn but never updated by a Stop hook keeps the bubble
+// stuck on yellow forever.
+var StaleThreshold = 30 * time.Second
 
 // Refresh re-reads on-disk state for every entry and reconciles it with
 // the live tmux session set. Exposed publicly so main.go can call it once
@@ -134,9 +161,15 @@ func (m Model) applyRefresh() Model {
 			running[s] = struct{}{}
 		}
 	}
+	now := time.Now()
 	for i := range m.entries {
 		slug := m.entries[i].Slug
-		k := m.deps.ReadState(m.entries[i].Path, slug)
+		root := m.entries[i].RepoRoot
+		if root == "" {
+			root = m.entries[i].Path
+		}
+		st := m.deps.ReadState(root, slug)
+		k := decayStale(st, now)
 		if running != nil {
 			if _, alive := running[slug]; alive {
 				if k == state.KindNone {
@@ -151,6 +184,21 @@ func (m Model) applyRefresh() Model {
 	m.entries = SortEntries(m.entries)
 	m.applySearch()
 	return m
+}
+
+// decayStale collapses stale "working" / "waiting_input" states into idle.
+// "ready" and "idle" don't decay because they're stable resting states.
+func decayStale(st state.State, now time.Time) state.Kind {
+	if st.Kind != state.KindWorking && st.Kind != state.KindWaitingInput {
+		return st.Kind
+	}
+	if st.Ts.IsZero() {
+		return state.KindIdle
+	}
+	if now.Sub(st.Ts) > StaleThreshold {
+		return state.KindIdle
+	}
+	return st.Kind
 }
 
 func (m Model) applyStateMsg(msg StateMsg) Model {
@@ -328,7 +376,7 @@ func (m Model) actionEnter() (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			return m, tea.Sequence(
 				tea.SetWindowTitle(titleAttached(*entry)),
-				tea.ExecProcess(cmd, func(error) tea.Msg { return refreshTickMsg{} }),
+				tea.ExecProcess(cmd, func(error) tea.Msg { return RefreshMsg{} }),
 				tea.SetWindowTitle(titleListView),
 			)
 		}

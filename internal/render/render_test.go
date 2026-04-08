@@ -35,3 +35,25 @@ func TestLineNonGitHub(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestLineGitHubSubdir(t *testing.T) {
+	got := Line(
+		config.Dir{Path: "/x/datalake/apps/api"},
+		repoinfo.Info{IsGitHub: true, Org: "stonal-tech", Repo: "datalake", Branch: "main", RepoRoot: "/x/datalake"},
+		"s",
+	)
+	if got != "s/datalake apps/api [main]" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLineGitHubRepoRootHasNoSubpath(t *testing.T) {
+	got := Line(
+		config.Dir{Path: "/x/datalake"},
+		repoinfo.Info{IsGitHub: true, Org: "stonal-tech", Repo: "datalake", Branch: "main", RepoRoot: "/x/datalake"},
+		"s",
+	)
+	if got != "s/datalake [main]" {
+		t.Fatalf("got %q", got)
+	}
+}
