@@ -23,6 +23,22 @@ type statsMsg struct {
 	stats gitstats.Stats
 }
 
+// branchListMsg carries the result of an asynchronous `git branch` invocation
+// fired when the user opens the branch picker.
+type branchListMsg struct {
+	slug     string
+	branches []string
+	err      error
+}
+
+// branchCheckoutDoneMsg is the result of an asynchronous `git checkout` fired
+// from the branch picker. On success, the picker is dismissed and entries
+// are refreshed; on error, the picker stays open and renders the message.
+type branchCheckoutDoneMsg struct {
+	slug string
+	err  error
+}
+
 // worktreeRemoveDoneMsg is the result of an asynchronous worktree remove
 // flow (dirty check + session kill + git worktree remove).
 type worktreeRemoveDoneMsg struct {
@@ -59,6 +75,7 @@ const (
 	modalNone modalKind = iota
 	modalBranchPrompt
 	modalConfirmRemove
+	modalBranchPicker
 )
 
 // Model holds the TUI state.
@@ -77,6 +94,14 @@ type Model struct {
 	modalForce bool
 	modalErr   string
 
+	// Branch picker state. Active when modal == modalBranchPicker.
+	branchSlug    string   // entry the picker was opened on
+	branchRepo    string   // repo path passed to git
+	branches      []string // local branches loaded async
+	branchFilter  string   // typed filter
+	branchCursor  int      // index into the filtered view
+	branchLoading bool     // true until branchListMsg arrives
+
 	quitting bool
 
 	// autoAttachSlug, if non-empty, makes Init emit an AttachMsg that
@@ -86,6 +111,56 @@ type Model struct {
 	// Recording fields used by tests/main to learn what the model wants to do.
 	pendingAttach string // slug to attach via tea.ExecProcess
 	lastError     string
+
+	// In-flight long-running operations, rendered at the bottom of the
+	// view. Each op has a unique id and a human label. Ops are registered
+	// synchronously when their tea.Cmd is dispatched and cleared when the
+	// wrapped result message arrives. statsCmd refreshes are intentionally
+	// not tracked — they're per-tick noise.
+	nextOpID int
+	inflight map[int]string
+	opOrder  []int
+}
+
+// opMsg wraps the result of a tracked long-running command. Update unwraps
+// it, clears the in-flight entry, then re-dispatches the inner message so
+// the existing handlers stay unchanged.
+type opMsg struct {
+	id  int
+	msg tea.Msg
+}
+
+// beginOp registers a new in-flight operation and returns its id.
+func (m *Model) beginOp(label string) int {
+	m.nextOpID++
+	id := m.nextOpID
+	if m.inflight == nil {
+		m.inflight = map[int]string{}
+	}
+	m.inflight[id] = label
+	m.opOrder = append(m.opOrder, id)
+	return id
+}
+
+// endOp clears a previously-registered in-flight operation.
+func (m *Model) endOp(id int) {
+	delete(m.inflight, id)
+	out := m.opOrder[:0]
+	for _, x := range m.opOrder {
+		if x != id {
+			out = append(out, x)
+		}
+	}
+	m.opOrder = out
+}
+
+// wrapOp envelopes a tea.Cmd's result so Update can clear the matching
+// in-flight entry. A nil cmd is returned untouched.
+func wrapOp(id int, cmd tea.Cmd) tea.Cmd {
+	if cmd == nil {
+		return nil
+	}
+	return func() tea.Msg { return opMsg{id: id, msg: cmd()} }
 }
 
 // WithAutoAttach makes the next Init() emit an AttachMsg targeting slug.
@@ -158,6 +233,12 @@ type StateMsg struct {
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case opMsg:
+		(&m).endOp(msg.id)
+		if msg.msg == nil {
+			return m, nil
+		}
+		return m.Update(msg.msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case StateMsg:
@@ -180,6 +261,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastError = ""
 		}
 		return m, nil
+	case branchListMsg:
+		// Late delivery: ignore if the picker has already been dismissed,
+		// or if the user opened a different entry's picker since.
+		if m.modal != modalBranchPicker || m.branchSlug != msg.slug {
+			return m, nil
+		}
+		m.branchLoading = false
+		if msg.err != nil {
+			m.modalErr = msg.err.Error()
+			return m, nil
+		}
+		m.branches = msg.branches
+		m.branchCursor = 0
+		return m, nil
+	case branchCheckoutDoneMsg:
+		if m.modal != modalBranchPicker || m.branchSlug != msg.slug {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.modalErr = msg.err.Error()
+			return m, nil
+		}
+		m.modal = modalNone
+		m.branches = nil
+		m.branchFilter = ""
+		m.branchSlug = ""
+		m.branchRepo = ""
+		m = m.applyRefresh()
+		return m, m.statsCmd()
 	case worktreeRemoveDoneMsg:
 		if msg.dirtyRefused {
 			m.modalErr = "worktree is dirty; press f to force"
@@ -315,6 +425,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleBranchPromptKey(msg)
 	case modalConfirmRemove:
 		return m.handleConfirmRemoveKey(msg)
+	case modalBranchPicker:
+		return m.handleBranchPickerKey(msg)
 	}
 	if m.searching {
 		return m.handleSearchKey(msg)
@@ -345,6 +457,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.modal = modalBranchPrompt
 		m.modalInput = ""
 		m.modalErr = ""
+	case "b":
+		return m.actionBranchPicker()
 	case "r":
 		if len(m.filtered) > 0 {
 			m.modal = modalConfirmRemove
@@ -402,7 +516,8 @@ func (m Model) handleBranchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		if m.deps.Git != nil {
 			args := BuildWorktreeAddArgs(entry.Path, m.modalInput)
-			cmd = m.gitRunCmd("", args...)
+			id := (&m).beginOp("git worktree add " + m.modalInput)
+			cmd = wrapOp(id, m.gitRunCmd("", args...))
 		}
 		m.modal = modalNone
 		m.modalInput = ""
@@ -413,6 +528,124 @@ func (m Model) handleBranchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyRunes, tea.KeySpace:
 		m.modalInput += string(msg.Runes)
+	}
+	return m, nil
+}
+
+// actionBranchPicker opens the branch picker modal for the selected entry and
+// kicks off an asynchronous `git branch` to populate the list.
+func (m Model) actionBranchPicker() (tea.Model, tea.Cmd) {
+	entry := m.selectedEntry()
+	if entry == nil || m.deps.Git == nil {
+		return m, nil
+	}
+	m.modal = modalBranchPicker
+	m.modalErr = ""
+	m.branchSlug = entry.Slug
+	m.branchRepo = entry.Path
+	m.branches = nil
+	m.branchFilter = ""
+	m.branchCursor = 0
+	m.branchLoading = true
+	git := m.deps.Git
+	slug, repo := entry.Slug, entry.Path
+	cmd := func() tea.Msg {
+		out, err := git.Run("", BuildBranchListArgs(repo)...)
+		if err != nil {
+			return branchListMsg{slug: slug, err: err}
+		}
+		return branchListMsg{slug: slug, branches: ParseBranchList(out)}
+	}
+	id := (&m).beginOp("loading branches")
+	return m, wrapOp(id, cmd)
+}
+
+// filteredBranches returns branches whose name contains branchFilter
+// (case-insensitive substring match). When the filter is empty, all branches
+// are returned.
+func (m Model) filteredBranches() []string {
+	if m.branchFilter == "" {
+		return m.branches
+	}
+	needle := strings.ToLower(m.branchFilter)
+	var out []string
+	for _, b := range m.branches {
+		if strings.Contains(strings.ToLower(b), needle) {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+func (m Model) handleBranchPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.modal = modalNone
+		m.branches = nil
+		m.branchFilter = ""
+		m.branchSlug = ""
+		m.branchRepo = ""
+		m.modalErr = ""
+		return m, nil
+	case tea.KeyUp:
+		if m.branchCursor > 0 {
+			m.branchCursor--
+		}
+		return m, nil
+	case tea.KeyDown:
+		if m.branchCursor < len(m.filteredBranches())-1 {
+			m.branchCursor++
+		}
+		return m, nil
+	case tea.KeyEnter:
+		filtered := m.filteredBranches()
+		var target string
+		create := false
+		switch {
+		case len(filtered) > 0:
+			if m.branchCursor < 0 || m.branchCursor >= len(filtered) {
+				return m, nil
+			}
+			target = filtered[m.branchCursor]
+		case m.branchFilter != "":
+			if err := ValidateBranchName(m.branchFilter); err != nil {
+				m.modalErr = "invalid branch name"
+				return m, nil
+			}
+			target = m.branchFilter
+			create = true
+		default:
+			return m, nil
+		}
+		git := m.deps.Git
+		if git == nil {
+			return m, nil
+		}
+		slug, repo := m.branchSlug, m.branchRepo
+		args := BuildCheckoutArgs(repo, target, create)
+		m.modalErr = ""
+		cmd := func() tea.Msg {
+			_, err := git.Run("", args...)
+			return branchCheckoutDoneMsg{slug: slug, err: err}
+		}
+		label := "git checkout " + target
+		if create {
+			label = "git checkout -b " + target
+		}
+		id := (&m).beginOp(label)
+		return m, wrapOp(id, cmd)
+	case tea.KeyBackspace:
+		if len(m.branchFilter) > 0 {
+			m.branchFilter = m.branchFilter[:len(m.branchFilter)-1]
+			m.branchCursor = 0
+			m.modalErr = ""
+		}
+		return m, nil
+	case tea.KeyRunes, tea.KeySpace:
+		m.branchFilter += string(msg.Runes)
+		m.branchCursor = 0
+		m.modalErr = ""
+		return m, nil
 	}
 	return m, nil
 }
@@ -433,8 +666,8 @@ func (m Model) handleConfirmRemoveKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Worktree path: dirty check + kill session + git worktree
 			// remove all happen in a goroutine. The modal stays open and
 			// shows "removing..." until worktreeRemoveDoneMsg arrives.
-			m.modalErr = "removing..."
-			return m, m.removeWorktreeCmd(entry.Slug, entry.Path, m.modalForce)
+			id := (&m).beginOp("git worktree remove " + entry.Path)
+			return m, wrapOp(id, m.removeWorktreeCmd(entry.Slug, entry.Path, m.modalForce))
 		}
 		// Registered dir: unregister is not git work, run inline.
 		if m.deps.Unregister != nil {
@@ -516,7 +749,8 @@ func (m Model) actionGit(args ...string) (tea.Model, tea.Cmd) {
 	if entry == nil || m.deps.Git == nil {
 		return m, nil
 	}
-	return m, m.gitRunCmd(entry.Path, args...)
+	id := (&m).beginOp("git " + strings.Join(args, " "))
+	return m, wrapOp(id, m.gitRunCmd(entry.Path, args...))
 }
 
 // gitRunCmd builds a tea.Cmd that runs Git.Run in a goroutine and reports
@@ -678,6 +912,15 @@ func (m Model) View() string {
 		}
 		b.WriteString("\n")
 	}
+	if len(m.opOrder) > 0 {
+		b.WriteString("\n⏳ ")
+		for i, id := range m.opOrder {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(m.inflight[id])
+		}
+	}
 	switch {
 	case m.modal == modalBranchPrompt:
 		b.WriteString("\nNew worktree branch: ")
@@ -686,6 +929,43 @@ func (m Model) View() string {
 			b.WriteString("\n  ⚠ ")
 			b.WriteString(m.modalErr)
 		}
+	case m.modal == modalBranchPicker:
+		b.WriteString("\nCheckout branch: ")
+		b.WriteString(m.branchFilter)
+		b.WriteString("\n")
+		switch {
+		case m.branchLoading:
+			b.WriteString("  loading branches...\n")
+		case len(m.branches) == 0:
+			b.WriteString("  (no branches)\n")
+		default:
+			filtered := m.filteredBranches()
+			if len(filtered) == 0 {
+				if ValidateBranchName(m.branchFilter) == nil {
+					b.WriteString("  ↵ create new branch \"")
+					b.WriteString(m.branchFilter)
+					b.WriteString("\"\n")
+				} else {
+					b.WriteString("  (no match)\n")
+				}
+			} else {
+				for i, name := range filtered {
+					if i == m.branchCursor {
+						b.WriteString("> ")
+					} else {
+						b.WriteString("  ")
+					}
+					b.WriteString(name)
+					b.WriteString("\n")
+				}
+			}
+		}
+		if m.modalErr != "" {
+			b.WriteString("  ⚠ ")
+			b.WriteString(m.modalErr)
+			b.WriteString("\n")
+		}
+		b.WriteString("  ↑↓ move  ↵ checkout/create  esc cancel")
 	case m.modal == modalConfirmRemove:
 		entry := m.selectedEntry()
 		if entry != nil && entry.IsWorktree {
@@ -706,7 +986,7 @@ func (m Model) View() string {
 		b.WriteString("\n/")
 		b.WriteString(m.search)
 	default:
-		b.WriteString("\n↑↓ move  / search  enter open  o files  e edit  n new  u pull  m merge-main  p push  x stop  r remove  q quit")
+		b.WriteString("\n↑↓ move  / search  enter open  o files  e edit  n new  b branch  u pull  m merge-main  p push  x stop  r remove  q quit")
 	}
 	return b.String()
 }

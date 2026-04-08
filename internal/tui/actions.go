@@ -70,6 +70,35 @@ func BuildWorktreeAddArgs(repo, branch string) []string {
 	return []string{"-C", repo, "worktree", "add", target, "-b", branch}
 }
 
+// BuildBranchListArgs returns the git argv for listing local branch names,
+// one per line, no decoration.
+func BuildBranchListArgs(repo string) []string {
+	return []string{"-C", repo, "branch", "--format=%(refname:short)"}
+}
+
+// BuildCheckoutArgs returns the git argv for checking out a branch in repo.
+// When create is true, the branch is created from HEAD.
+func BuildCheckoutArgs(repo, branch string, create bool) []string {
+	args := []string{"-C", repo, "checkout"}
+	if create {
+		args = append(args, "-b")
+	}
+	return append(args, branch)
+}
+
+// ParseBranchList splits the output of `git branch --format=%(refname:short)`
+// into a slice of branch names. Empty lines are skipped.
+func ParseBranchList(out string) []string {
+	var branches []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			branches = append(branches, line)
+		}
+	}
+	return branches
+}
+
 // BuildWorktreeRemoveArgs returns the git argv for removing a worktree.
 func BuildWorktreeRemoveArgs(worktreePath string, force bool) []string {
 	args := []string{"worktree", "remove"}

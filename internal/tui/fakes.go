@@ -3,17 +3,24 @@ package tui
 import "sync"
 
 // FakeGit captures Run/IsDirty calls. Configure Dirty to control IsDirty.
+// RunFunc, when non-nil, supplies the (output, error) for each Run call so
+// tests can stub commands like `git branch --format=...`.
 type FakeGit struct {
-	mu    sync.Mutex
-	Calls [][]string // each entry is [dir, args...]
-	Dirty bool
+	mu      sync.Mutex
+	Calls   [][]string // each entry is [dir, args...]
+	Dirty   bool
+	RunFunc func(dir string, args []string) (string, error)
 }
 
-// Run records the call and returns no output.
+// Run records the call and returns no output (or RunFunc's result if set).
 func (f *FakeGit) Run(dir string, args ...string) (string, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.Calls = append(f.Calls, append([]string{dir}, args...))
+	fn := f.RunFunc
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(dir, args)
+	}
 	return "", nil
 }
 

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -135,6 +136,190 @@ func TestNewWorktreeRejectsBadBranch(t *testing.T) {
 	}
 	if len(g.Snapshot()) != 0 {
 		t.Fatal("git should not have been called")
+	}
+}
+
+// branchPickerSetup primes a Model with the picker open and the async
+// branchListMsg already delivered, so individual tests start at the
+// "user is now interacting with the picker" state.
+func branchPickerSetup(t *testing.T, branches string, runErr error) (Model, *FakeGit) {
+	t.Helper()
+	_, g, _, deps := actionDeps()
+	g.RunFunc = func(dir string, args []string) (string, error) {
+		// Only respond to the branch-list call; checkout calls fall through.
+		if len(args) >= 4 && args[2] == "branch" {
+			return branches, nil
+		}
+		return "", runErr
+	}
+	m := NewModel([]Entry{entryAt("abc", "/repo")}).WithDeps(deps)
+	next, cmd := m.Update(key("b"))
+	m = next.(Model)
+	if m.modal != modalBranchPicker {
+		t.Fatalf("modal = %v, want picker", m.modal)
+	}
+	m = drainCmd(t, m, cmd)
+	return m, g
+}
+
+func TestBranchPickerCheckoutExisting(t *testing.T) {
+	m, g := branchPickerSetup(t, "main\nfeat/x\nfeat/y\n", nil)
+	g.Calls = nil // forget the list call so assertions are easier
+	// type "feat/y" → only one match → enter
+	for _, r := range "y" {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(Model)
+	}
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	m = drainCmd(t, m, cmd)
+	if m.modal != modalNone {
+		t.Fatalf("modal should close on success, got %v", m.modal)
+	}
+	calls := g.Snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 git call, got %v", calls)
+	}
+	got := calls[0]
+	want := []string{"", "-C", "/repo", "checkout", "feat/y"}
+	if len(got) != len(want) {
+		t.Fatalf("checkout args = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("checkout args = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestBranchPickerCreatesWhenNoMatch(t *testing.T) {
+	m, g := branchPickerSetup(t, "main\n", nil)
+	g.Calls = nil
+	for _, r := range "feat/new" {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(Model)
+	}
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	m = drainCmd(t, m, cmd)
+	if m.modal != modalNone {
+		t.Fatalf("modal should close on success, got %v", m.modal)
+	}
+	calls := g.Snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 git call, got %v", calls)
+	}
+	got := calls[0]
+	want := []string{"", "-C", "/repo", "checkout", "-b", "feat/new"}
+	if len(got) != len(want) {
+		t.Fatalf("checkout args = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("checkout args = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestBranchPickerCheckoutErrorKeepsModalOpen(t *testing.T) {
+	_, g, _, deps := actionDeps()
+	checkoutErr := errors.New("dirty tree")
+	g.RunFunc = func(dir string, args []string) (string, error) {
+		if len(args) >= 4 && args[2] == "branch" {
+			return "main\nfeat/x\n", nil
+		}
+		return "", checkoutErr
+	}
+	m := NewModel([]Entry{entryAt("abc", "/repo")}).WithDeps(deps)
+	next, cmd := m.Update(key("b"))
+	m = next.(Model)
+	m = drainCmd(t, m, cmd)
+	// pick "main" (cursor at 0) and press enter
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	m = drainCmd(t, m, cmd)
+	if m.modal != modalBranchPicker {
+		t.Fatalf("modal should stay open on checkout error, got %v", m.modal)
+	}
+	if m.modalErr != "dirty tree" {
+		t.Fatalf("modalErr = %q, want %q", m.modalErr, "dirty tree")
+	}
+}
+
+func TestBranchPickerEscCancels(t *testing.T) {
+	m, g := branchPickerSetup(t, "main\nfeat/x\n", nil)
+	g.Calls = nil
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	if m.modal != modalNone {
+		t.Fatalf("modal should close on esc, got %v", m.modal)
+	}
+	if len(g.Snapshot()) != 0 {
+		t.Fatalf("no git calls expected after esc, got %v", g.Snapshot())
+	}
+}
+
+func TestBranchPickerFilterNarrows(t *testing.T) {
+	m, _ := branchPickerSetup(t, "main\nfeat/x\nfeat/y\nbugfix\n", nil)
+	for _, r := range "feat" {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(Model)
+	}
+	got := m.filteredBranches()
+	if len(got) != 2 || got[0] != "feat/x" || got[1] != "feat/y" {
+		t.Fatalf("filteredBranches = %v", got)
+	}
+}
+
+func TestInflightTracksGitOps(t *testing.T) {
+	_, _, _, deps := actionDeps()
+	m := NewModel([]Entry{entryAt("abc", "/repo")}).WithDeps(deps)
+	// Pressing 'p' kicks off a `git push` long op.
+	next, cmd := m.Update(key("p"))
+	m = next.(Model)
+	if len(m.opOrder) != 1 {
+		t.Fatalf("expected 1 in-flight op after key press, got %d", len(m.opOrder))
+	}
+	if got := m.inflight[m.opOrder[0]]; got != "git push" {
+		t.Fatalf("inflight label = %q, want %q", got, "git push")
+	}
+	if cmd == nil {
+		t.Fatal("expected a tea.Cmd to be returned")
+	}
+	// Drain: the wrapped opMsg arrives, op is cleared, inner gitDoneMsg dispatched.
+	m = drainCmd(t, m, cmd)
+	if len(m.opOrder) != 0 {
+		t.Fatalf("expected in-flight to clear after completion, got %v", m.inflight)
+	}
+}
+
+func TestInflightShowsBranchListAndCheckout(t *testing.T) {
+	_, g, _, deps := actionDeps()
+	g.RunFunc = func(dir string, args []string) (string, error) {
+		if len(args) >= 4 && args[2] == "branch" {
+			return "main\n", nil
+		}
+		return "", nil
+	}
+	m := NewModel([]Entry{entryAt("abc", "/repo")}).WithDeps(deps)
+	next, cmd := m.Update(key("b"))
+	m = next.(Model)
+	if len(m.opOrder) != 1 || m.inflight[m.opOrder[0]] != "loading branches" {
+		t.Fatalf("expected loading-branches op, got %v", m.inflight)
+	}
+	m = drainCmd(t, m, cmd)
+	if len(m.opOrder) != 0 {
+		t.Fatalf("expected op to clear after branchListMsg, got %v", m.inflight)
+	}
+	// Now checkout main.
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if len(m.opOrder) != 1 || m.inflight[m.opOrder[0]] != "git checkout main" {
+		t.Fatalf("expected checkout op, got %v", m.inflight)
+	}
+	m = drainCmd(t, m, cmd)
+	if len(m.opOrder) != 0 {
+		t.Fatalf("expected op to clear after checkout, got %v", m.inflight)
 	}
 }
 
