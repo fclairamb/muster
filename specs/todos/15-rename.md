@@ -13,7 +13,7 @@ binary changes name underneath them.
 |----------------------|---------------------------------------|------------------------------------------|
 | GitHub repo          | `fclairamb/supersetfixed`             | `fclairamb/muster` (manual: `gh repo rename`) |
 | Go module path       | `github.com/fclairamb/ssf`            | `github.com/fclairamb/muster`            |
-| Binary               | `ssf`                                 | `muster`                                 |
+| Binary               | `ssf`                                 | `muster` (with `mst` symlink for fast typing) |
 | Tmux socket          | `tmux -L ssf …`                       | `tmux -L muster …`                       |
 | Tmux session prefix  | `ssf-<slug>`                          | `muster-<slug>`                          |
 | Per-repo state dir   | `<repo>/.ssf/state/`                  | `<repo>/.muster/state/`                  |
@@ -75,8 +75,13 @@ Running `muster migrate` twice is a no-op the second time:
 2. Update every Go import path: `github.com/fclairamb/ssf` →
    `github.com/fclairamb/muster`.
 3. Rename `cmd/ssf/` → `cmd/muster/`.
-4. Update `Makefile`: build target writes `bin/muster`, install copies
-   to `$PREFIX/bin/muster`.
+4. Update `Makefile`:
+   - `build` target writes `bin/muster`.
+   - `install` target copies `bin/muster` to `$PREFIX/bin/muster` AND
+     creates a relative symlink `$PREFIX/bin/mst → muster` so the
+     three-letter shortcut is available without requiring a separate
+     binary build.
+   - `uninstall` (if added later) removes both files.
 
 ### Constant renames
 
@@ -96,6 +101,23 @@ Running `muster migrate` twice is a no-op the second time:
 6. `cmd/muster/main.go`: `hookCommand()` keeps the same shape, name
    `hook`, hidden, with `write` subcommand. Same arg shape.
 7. `cmd/muster/main.go`: app name `"muster"`, usage strings updated.
+
+### `mst` shortcut
+
+The `mst` symlink is the only place we expose the three-letter form. It
+must behave identically to `muster` in every situation:
+
+- All subcommands work via the symlink (`mst list`, `mst rm`, etc).
+- `mst --help` and `mst --version` produce the same output as the long
+  form. urfave/cli's `Name` field is hardcoded to `"muster"`, so the
+  help text always says `muster` regardless of how the binary was
+  invoked. That's intentional — one canonical name in docs, one short
+  alias for typing. Don't try to make the binary self-rename based on
+  `os.Args[0]`; the inconsistency would be more confusing than helpful.
+- The hook command literal stays `muster hook write` even when the user
+  invoked `mst` to register the dir. The slug must round-trip through
+  the long form so existing installations don't break if the symlink
+  is later removed.
 
 ### Migration code
 
@@ -167,8 +189,14 @@ Default + `tmux` + `e2e` + `manual` still apply.
 
 ```sh
 make build && make vet && make test && make test-tmux
+make install
 ./bin/muster --version
 ./bin/muster --help
+
+# Symlink works and resolves to the same binary:
+test -L $HOME/.local/bin/mst
+mst --version            # same output as muster --version
+mst list                 # same as muster list
 
 # Migration smoke test:
 mkdir -p /tmp/ssf-rename-test
