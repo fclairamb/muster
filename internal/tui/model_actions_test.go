@@ -31,6 +31,22 @@ func key(s string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
 
+// drainCmd executes a tea.Cmd to completion (single message, no batches)
+// and feeds its result back into the model. Used by tests that need to
+// observe the side effects of asynchronous git operations.
+func drainCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	if cmd == nil {
+		return m
+	}
+	msg := cmd()
+	if msg == nil {
+		return m
+	}
+	next, _ := m.Update(msg)
+	return next.(Model)
+}
+
 func TestEnterStartsAndAttaches(t *testing.T) {
 	sm, _, _, deps := actionDeps()
 	m := NewModel([]Entry{entryAt("abc", "/repo")}).WithDeps(deps)
@@ -89,8 +105,10 @@ func TestNewWorktreeFlow(t *testing.T) {
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = next.(Model)
 	}
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	var cmd tea.Cmd
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
+	m = drainCmd(t, m, cmd)
 	calls := g.Snapshot()
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 git call, got %v", calls)
@@ -155,8 +173,9 @@ func TestRemoveCleanWorktree(t *testing.T) {
 	m := NewModel([]Entry{wt}).WithDeps(deps)
 	next, _ := m.Update(key("r"))
 	m = next.(Model)
-	next, _ = m.Update(key("y"))
+	next, cmd := m.Update(key("y"))
 	m = next.(Model)
+	m = drainCmd(t, m, cmd)
 	if sm.Has("abc") {
 		t.Fatal("session not killed")
 	}
@@ -178,20 +197,23 @@ func TestRemoveDirtyRequiresForce(t *testing.T) {
 	m := NewModel([]Entry{wt}).WithDeps(deps)
 	next, _ := m.Update(key("r"))
 	m = next.(Model)
-	next, _ = m.Update(key("y"))
+	next, cmd := m.Update(key("y"))
 	m = next.(Model)
+	m = drainCmd(t, m, cmd)
 	// Modal should still be open with an error.
 	if m.modal != modalConfirmRemove {
 		t.Fatal("modal should remain open on dirty refusal")
 	}
+	// Only the IsDirty check should have run; no destructive Run calls.
 	if len(g.Snapshot()) != 0 {
-		t.Fatal("git should not have run on dirty refusal")
+		t.Fatal("git Run should not have run on dirty refusal")
 	}
 	// Press f to force, then y.
 	next, _ = m.Update(key("f"))
 	m = next.(Model)
-	next, _ = m.Update(key("y"))
+	next, cmd = m.Update(key("y"))
 	m = next.(Model)
+	m = drainCmd(t, m, cmd)
 	calls := g.Snapshot()
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 git call, got %v", calls)

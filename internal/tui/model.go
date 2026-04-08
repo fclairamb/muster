@@ -2,13 +2,55 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/fclairamb/muster/internal/gitstats"
 	"github.com/fclairamb/muster/internal/state"
 )
+
+// gitDoneMsg is the result of an asynchronous Git.Run invocation.
+// All git work happens in a tea.Cmd goroutine so the TUI never blocks.
+type gitDoneMsg struct{ err error }
+
+// statsMsg carries an updated gitstats.Stats for one entry, computed in
+// a goroutine off the TUI main loop.
+type statsMsg struct {
+	slug  string
+	stats gitstats.Stats
+}
+
+// worktreeRemoveDoneMsg is the result of an asynchronous worktree remove
+// flow (dirty check + session kill + git worktree remove).
+type worktreeRemoveDoneMsg struct {
+	slug         string
+	path         string
+	dirtyRefused bool
+	err          error
+}
+
+// StatsSuffix renders the per-entry git counts shown after the display
+// string in the list. Each indicator is omitted when its count is zero;
+// returns "" when there's nothing to show.
+func StatsSuffix(s gitstats.Stats) string {
+	var b strings.Builder
+	if s.Unpushed > 0 {
+		fmt.Fprintf(&b, " +%d", s.Unpushed)
+	}
+	if s.Behind > 0 {
+		fmt.Fprintf(&b, " -%d", s.Behind)
+	}
+	if s.Modified > 0 {
+		fmt.Fprintf(&b, " M%d", s.Modified)
+	}
+	if s.Untracked > 0 {
+		fmt.Fprintf(&b, " ?%d", s.Untracked)
+	}
+	return b.String()
+}
 
 // modalKind is the kind of overlay currently shown over the list, if any.
 type modalKind int
@@ -121,7 +163,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StateMsg:
 		return m.applyStateMsg(msg), nil
 	case RefreshMsg:
-		return m.applyRefresh(), nil
+		m = m.applyRefresh()
+		return m, m.statsCmd()
+	case statsMsg:
+		for i := range m.entries {
+			if m.entries[i].Slug == msg.slug {
+				m.entries[i].Stats = msg.stats
+			}
+		}
+		m.applySearch()
+		return m, nil
+	case gitDoneMsg:
+		if msg.err != nil {
+			m.lastError = msg.err.Error()
+		} else {
+			m.lastError = ""
+		}
+		return m, nil
+	case worktreeRemoveDoneMsg:
+		if msg.dirtyRefused {
+			m.modalErr = "worktree is dirty; press f to force"
+			return m, nil
+		}
+		if msg.err != nil {
+			m.modalErr = msg.err.Error()
+			return m, nil
+		}
+		m.entries = removeBySlugPath(m.entries, msg.slug, msg.path)
+		m.applySearch()
+		m.modal = modalNone
+		return m, nil
 	case AttachMsg:
 		// Move the cursor to the requested entry, then fall through to
 		// the same actionEnter path used by the Enter key.
@@ -280,6 +351,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.modalForce = false
 			m.modalErr = ""
 		}
+	case "x":
+		return m.actionKill()
+	case "u":
+		return m.actionGit("pull")
+	case "m":
+		return m.actionGit("pull", "origin", "main")
+	case "p":
+		return m.actionGit("push")
 	}
 	return m, nil
 }
@@ -320,14 +399,14 @@ func (m Model) handleBranchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.modal = modalNone
 			return m, nil
 		}
+		var cmd tea.Cmd
 		if m.deps.Git != nil {
 			args := BuildWorktreeAddArgs(entry.Path, m.modalInput)
-			if _, err := m.deps.Git.Run("", args...); err != nil {
-				m.lastError = err.Error()
-			}
+			cmd = m.gitRunCmd("", args...)
 		}
 		m.modal = modalNone
 		m.modalInput = ""
+		return m, cmd
 	case tea.KeyBackspace:
 		if len(m.modalInput) > 0 {
 			m.modalInput = m.modalInput[:len(m.modalInput)-1]
@@ -351,29 +430,17 @@ func (m Model) handleConfirmRemoveKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if entry.IsWorktree {
-			// Worktree path: dirty check, kill session, git worktree remove.
-			if m.deps.Git != nil {
-				dirty, _ := m.deps.Git.IsDirty(entry.Path)
-				if dirty && !m.modalForce {
-					m.modalErr = "worktree is dirty; press f to force"
-					return m, nil
-				}
-			}
-			if m.deps.Session != nil {
-				_ = m.deps.Session.Kill(entry.Slug)
-			}
-			if m.deps.Git != nil {
-				args := BuildWorktreeRemoveArgs(entry.Path, m.modalForce)
-				_, _ = m.deps.Git.Run("", args...)
-			}
-		} else {
-			// Registered dir: just unregister. Sessions and worktrees are
-			// kept on disk per spec.
-			if m.deps.Unregister != nil {
-				if err := m.deps.Unregister(entry.Path); err != nil {
-					m.modalErr = err.Error()
-					return m, nil
-				}
+			// Worktree path: dirty check + kill session + git worktree
+			// remove all happen in a goroutine. The modal stays open and
+			// shows "removing..." until worktreeRemoveDoneMsg arrives.
+			m.modalErr = "removing..."
+			return m, m.removeWorktreeCmd(entry.Slug, entry.Path, m.modalForce)
+		}
+		// Registered dir: unregister is not git work, run inline.
+		if m.deps.Unregister != nil {
+			if err := m.deps.Unregister(entry.Path); err != nil {
+				m.modalErr = err.Error()
+				return m, nil
 			}
 		}
 		m.entries = removeEntry(m.entries, *entry)
@@ -414,6 +481,115 @@ func (m Model) actionEnter() (tea.Model, tea.Cmd) {
 		m.lastError = err.Error()
 	}
 	return m, nil
+}
+
+// actionKill stops the claude tmux session for the selected entry without
+// removing it from the registry. The entry stays in the list and reverts to
+// KindNone (no session) on the next refresh tick.
+func (m Model) actionKill() (tea.Model, tea.Cmd) {
+	entry := m.selectedEntry()
+	if entry == nil || m.deps.Session == nil {
+		return m, nil
+	}
+	if !m.deps.Session.Has(entry.Slug) {
+		return m, nil
+	}
+	if err := m.deps.Session.Kill(entry.Slug); err != nil {
+		m.lastError = err.Error()
+		return m, nil
+	}
+	if m.deps.ClearState != nil {
+		root := entry.RepoRoot
+		if root == "" {
+			root = entry.Path
+		}
+		_ = m.deps.ClearState(root, entry.Slug)
+	}
+	return m.applyRefresh(), nil
+}
+
+// actionGit runs a git command in the selected entry's directory and surfaces
+// any error in the footer. Used by the u/m/p key bindings (pull, pull from
+// main, push).
+func (m Model) actionGit(args ...string) (tea.Model, tea.Cmd) {
+	entry := m.selectedEntry()
+	if entry == nil || m.deps.Git == nil {
+		return m, nil
+	}
+	return m, m.gitRunCmd(entry.Path, args...)
+}
+
+// gitRunCmd builds a tea.Cmd that runs Git.Run in a goroutine and reports
+// the result via gitDoneMsg. This is the single funnel through which the
+// model launches non-blocking git invocations.
+func (m Model) gitRunCmd(dir string, args ...string) tea.Cmd {
+	git := m.deps.Git
+	if git == nil {
+		return nil
+	}
+	argv := append([]string(nil), args...)
+	return func() tea.Msg {
+		_, err := git.Run(dir, argv...)
+		return gitDoneMsg{err: err}
+	}
+}
+
+// removeWorktreeCmd performs the dirty check, session kill, and worktree
+// remove sequence in a goroutine. The TUI gets a single
+// worktreeRemoveDoneMsg back when it finishes.
+func (m Model) removeWorktreeCmd(slug, path string, force bool) tea.Cmd {
+	git := m.deps.Git
+	sess := m.deps.Session
+	return func() tea.Msg {
+		if git != nil {
+			dirty, _ := git.IsDirty(path)
+			if dirty && !force {
+				return worktreeRemoveDoneMsg{slug: slug, path: path, dirtyRefused: true}
+			}
+		}
+		if sess != nil {
+			_ = sess.Kill(slug)
+		}
+		if git != nil {
+			args := BuildWorktreeRemoveArgs(path, force)
+			if _, err := git.Run("", args...); err != nil {
+				return worktreeRemoveDoneMsg{slug: slug, path: path, err: err}
+			}
+		}
+		return worktreeRemoveDoneMsg{slug: slug, path: path}
+	}
+}
+
+// statsCmd builds a tea.Cmd batch that recomputes git stats for every
+// entry off the TUI main loop. Each entry's stats arrive as a separate
+// statsMsg so slow repos don't hold back fast ones.
+func (m Model) statsCmd() tea.Cmd {
+	if m.deps.GitStats == nil {
+		return nil
+	}
+	fn := m.deps.GitStats
+	cmds := make([]tea.Cmd, 0, len(m.entries))
+	for _, e := range m.entries {
+		slug, path := e.Slug, e.Path
+		cmds = append(cmds, func() tea.Msg {
+			return statsMsg{slug: slug, stats: fn(path)}
+		})
+	}
+	return tea.Batch(cmds...)
+}
+
+// removeBySlugPath returns entries with any element matching slug+path removed.
+func removeBySlugPath(entries []Entry, slug, path string) []Entry {
+	out := entries[:0]
+	for _, e := range entries {
+		if e.Slug == slug && e.Path == path {
+			continue
+		}
+		out = append(out, e)
+	}
+	dup := make([]Entry, len(out))
+	copy(dup, out)
+	return dup
 }
 
 func (m Model) actionOpen() (tea.Model, tea.Cmd) {
@@ -481,9 +657,13 @@ func (m Model) View() string {
 	var b strings.Builder
 	b.WriteString("muster\n\n")
 	for i, e := range m.filtered {
+		selected := i == m.cursor
 		cursor := "  "
-		if i == m.cursor {
+		if selected {
 			cursor = "> "
+		}
+		if selected {
+			b.WriteString("\x1b[7m")
 		}
 		b.WriteString(cursor)
 		for j := 0; j < e.Indent; j++ {
@@ -492,6 +672,10 @@ func (m Model) View() string {
 		b.WriteString(StatusEmoji(e.Kind))
 		b.WriteString(" ")
 		b.WriteString(e.Display)
+		b.WriteString(StatsSuffix(e.Stats))
+		if selected {
+			b.WriteString("\x1b[0m")
+		}
 		b.WriteString("\n")
 	}
 	switch {
@@ -522,7 +706,7 @@ func (m Model) View() string {
 		b.WriteString("\n/")
 		b.WriteString(m.search)
 	default:
-		b.WriteString("\n↑↓ move  / search  enter open  o files  e edit  n new  r remove  q quit")
+		b.WriteString("\n↑↓ move  / search  enter open  o files  e edit  n new  u pull  m merge-main  p push  x stop  r remove  q quit")
 	}
 	return b.String()
 }
