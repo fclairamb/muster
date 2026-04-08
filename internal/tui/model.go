@@ -66,13 +66,14 @@ func (m Model) Init() tea.Cmd {
 const titleListView = "ssf: list"
 
 // titleAttached returns the terminal title shown while the user is attached
-// to a session: "<display> (ssf) <emoji>".
+// to a session: "<display> <emoji>". The "(ssf)" tag is only shown in the
+// list view title — the user explicitly does not want it duplicated here.
 func titleAttached(e Entry) string {
 	emoji := StatusEmoji(e.Kind)
 	if e.Kind == state.KindNone {
 		emoji = StatusEmoji(state.KindIdle) // we're attached → at least idle
 	}
-	return e.Display + " (ssf) " + emoji
+	return e.Display + " " + emoji
 }
 
 // refreshTickMsg fires periodically and triggers a re-read of state from disk
