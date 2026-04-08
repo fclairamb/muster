@@ -23,6 +23,12 @@ func (f *FakeManager) Start(slug, cwd string) error {
 	return nil
 }
 
+// StartShell records a shell session for slug. The fake makes no
+// distinction between claude and shell sessions — slug uniqueness is enough.
+func (f *FakeManager) StartShell(slug, cwd string) error {
+	return f.Start(slug, cwd)
+}
+
 // Has reports whether a session for slug exists.
 func (f *FakeManager) Has(slug string) bool {
 	f.mu.Lock()

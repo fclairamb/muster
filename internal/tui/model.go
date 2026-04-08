@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/fclairamb/muster/internal/gitstats"
+	"github.com/fclairamb/muster/internal/session"
 	"github.com/fclairamb/muster/internal/state"
 )
 
@@ -467,6 +468,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "x":
 		return m.actionKill()
+	case "s":
+		return m.actionShell()
 	case "u":
 		return m.actionGit("pull")
 	case "m":
@@ -711,6 +714,42 @@ func (m Model) actionEnter() (tea.Model, tea.Cmd) {
 		}
 	}
 	if err := m.deps.Session.Attach(entry.Slug); err != nil {
+		m.lastError = err.Error()
+	}
+	return m, nil
+}
+
+// actionShell starts (if needed) and attaches to a parallel shell tmux
+// session for the selected entry. The shell session uses a separate slug
+// (entry.Slug + ShellSlugSuffix) so it never collides with — or appears
+// in — the entry's claude status reconciliation.
+func (m Model) actionShell() (tea.Model, tea.Cmd) {
+	entry := m.selectedEntry()
+	if entry == nil || m.deps.Session == nil {
+		return m, nil
+	}
+	shellSlug := entry.Slug + session.ShellSlugSuffix
+	if !m.deps.Session.Has(shellSlug) {
+		if err := m.deps.Session.StartShell(shellSlug, entry.Path); err != nil {
+			m.lastError = err.Error()
+			return m, nil
+		}
+	}
+	m.pendingAttach = shellSlug
+	if m.deps.AttachCmdFunc != nil {
+		cmd := m.deps.AttachCmdFunc(shellSlug)
+		if cmd != nil {
+			slug := shellSlug
+			return m, tea.Sequence(
+				tea.SetWindowTitle(entry.Display+" $"),
+				tea.ExecProcess(cmd, func(error) tea.Msg {
+					return attachExitedMsg{slug: slug}
+				}),
+				tea.SetWindowTitle(titleListView),
+			)
+		}
+	}
+	if err := m.deps.Session.Attach(shellSlug); err != nil {
 		m.lastError = err.Error()
 	}
 	return m, nil
@@ -986,7 +1025,7 @@ func (m Model) View() string {
 		b.WriteString("\n/")
 		b.WriteString(m.search)
 	default:
-		b.WriteString("\n↑↓ move  / search  enter open  o files  e edit  n new  b branch  u pull  m merge-main  p push  x stop  r remove  q quit")
+		b.WriteString("\n↑↓ move  / search  enter open  s shell  o files  e edit  n new  b branch  u pull  m merge-main  p push  x stop  r remove  q quit")
 	}
 	return b.String()
 }

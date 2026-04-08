@@ -271,6 +271,33 @@ func TestBranchPickerFilterNarrows(t *testing.T) {
 	}
 }
 
+func TestShellStartsAndAttachesWithSuffixedSlug(t *testing.T) {
+	sm, _, _, deps := actionDeps()
+	m := NewModel([]Entry{entryAt("abc", "/repo")}).WithDeps(deps)
+	next, _ := m.Update(key("s"))
+	m = next.(Model)
+	if !sm.Has("abc-sh") {
+		t.Fatal("shell session not started under suffixed slug")
+	}
+	if sm.Has("abc") {
+		t.Fatal("claude session unexpectedly started by shell action")
+	}
+	got := sm.Attached()
+	if len(got) != 1 || got[0] != "abc-sh" {
+		t.Fatalf("attached = %v, want [abc-sh]", got)
+	}
+	if m.PendingAttach() != "abc-sh" {
+		t.Fatalf("pendingAttach = %q, want abc-sh", m.PendingAttach())
+	}
+	// Pressing s a second time must reuse the existing session.
+	next, _ = m.Update(key("s"))
+	_ = next
+	list, _ := sm.List()
+	if len(list) != 1 {
+		t.Fatalf("expected 1 session after second press, got %v", list)
+	}
+}
+
 func TestInflightTracksGitOps(t *testing.T) {
 	_, _, _, deps := actionDeps()
 	m := NewModel([]Entry{entryAt("abc", "/repo")}).WithDeps(deps)

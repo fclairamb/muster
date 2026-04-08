@@ -213,16 +213,18 @@ func TestRefreshDoesNotDecayReady(t *testing.T) {
 // nullSession reports no sessions and no-ops every method.
 type nullSession struct{}
 
-func (nullSession) Start(slug, cwd string) error { return nil }
-func (nullSession) Has(slug string) bool         { return false }
-func (nullSession) Attach(slug string) error     { return nil }
-func (nullSession) Kill(slug string) error       { return nil }
-func (nullSession) List() ([]string, error)      { return nil, nil }
+func (nullSession) Start(slug, cwd string) error      { return nil }
+func (nullSession) StartShell(slug, cwd string) error { return nil }
+func (nullSession) Has(slug string) bool              { return false }
+func (nullSession) Attach(slug string) error          { return nil }
+func (nullSession) Kill(slug string) error            { return nil }
+func (nullSession) List() ([]string, error)           { return nil, nil }
 
 // liveSession reports a fixed set of running slugs.
 type liveSession struct{ alive []string }
 
-func (l liveSession) Start(slug, cwd string) error { return nil }
+func (l liveSession) Start(slug, cwd string) error      { return nil }
+func (l liveSession) StartShell(slug, cwd string) error { return nil }
 func (l liveSession) Has(slug string) bool {
 	for _, s := range l.alive {
 		if s == slug {

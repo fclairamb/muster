@@ -82,6 +82,18 @@ func (t Tmux) Start(slug, cwd string) error {
 	return nil
 }
 
+// StartShell spawns a detached tmux session running the user's shell in cwd.
+// No-op if the session already exists. The slug must already be the shell-
+// suffixed slug (callers add ShellSlugSuffix). No side panel; the shell is
+// a plain interactive session.
+func (t Tmux) StartShell(slug, cwd string) error {
+	if t.Has(slug) {
+		return nil
+	}
+	_, err := runTmux(buildStartArgs(slug, cwd, shellBinary(), nil)...)
+	return err
+}
+
 func (t Tmux) shouldSplit() bool {
 	if !t.SidePanel {
 		return false

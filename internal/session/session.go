@@ -6,10 +6,23 @@ import "os"
 // Manager abstracts tmux operations so the rest of the code can be unit-tested.
 type Manager interface {
 	Start(slug, cwd string) error
+	StartShell(slug, cwd string) error
 	Has(slug string) bool
 	Attach(slug string) error
 	Kill(slug string) error
 	List() ([]string, error)
+}
+
+// ShellSlugSuffix is appended to an entry slug to form the tmux session slug
+// for the entry's shell session, so it never collides with the claude session.
+const ShellSlugSuffix = "-sh"
+
+// shellBinary returns the user's shell, honoring $SHELL with a bash fallback.
+func shellBinary() string {
+	if v := os.Getenv("SHELL"); v != "" {
+		return v
+	}
+	return "bash"
 }
 
 // SocketName is the dedicated tmux socket name muster uses to avoid polluting
