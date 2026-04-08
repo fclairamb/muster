@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/fclairamb/ssf/internal/session"
-	"github.com/fclairamb/ssf/internal/state"
+	"github.com/fclairamb/muster/internal/session"
+	"github.com/fclairamb/muster/internal/state"
 )
 
 // GitRunner abstracts git command execution so tests can record calls.

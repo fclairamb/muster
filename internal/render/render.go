@@ -4,8 +4,8 @@ package render
 import (
 	"path/filepath"
 
-	"github.com/fclairamb/ssf/internal/config"
-	"github.com/fclairamb/ssf/internal/repoinfo"
+	"github.com/fclairamb/muster/internal/config"
+	"github.com/fclairamb/muster/internal/repoinfo"
 )
 
 // Line returns the human-readable label for a single registered directory.

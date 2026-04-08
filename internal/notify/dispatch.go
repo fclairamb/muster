@@ -3,8 +3,8 @@ package notify
 import (
 	"sync"
 
-	"github.com/fclairamb/ssf/internal/state"
-	"github.com/fclairamb/ssf/internal/state/watcher"
+	"github.com/fclairamb/muster/internal/state"
+	"github.com/fclairamb/muster/internal/state/watcher"
 )
 
 // NameFunc resolves a slug to its display name (e.g. "s/datalake [main]").

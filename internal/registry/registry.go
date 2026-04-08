@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/fclairamb/ssf/internal/config"
+	"github.com/fclairamb/muster/internal/config"
 )
 
 // ErrNotFound is returned when an operation targets a path not present in the registry.

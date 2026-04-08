@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/fclairamb/ssf/internal/state"
+	"github.com/fclairamb/muster/internal/state"
 )
 
 func sample() []Entry {

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/fclairamb/ssf/internal/state"
+	"github.com/fclairamb/muster/internal/state"
 )
 
 // Entry is a single row in the TUI list. It can be a registered repo, a

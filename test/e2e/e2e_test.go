@@ -14,16 +14,16 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/fclairamb/ssf/internal/notify"
-	"github.com/fclairamb/ssf/internal/orgprefix"
-	"github.com/fclairamb/ssf/internal/registry"
-	"github.com/fclairamb/ssf/internal/render"
-	"github.com/fclairamb/ssf/internal/repoinfo"
-	"github.com/fclairamb/ssf/internal/session"
-	"github.com/fclairamb/ssf/internal/slug"
-	"github.com/fclairamb/ssf/internal/state"
-	"github.com/fclairamb/ssf/internal/state/watcher"
-	"github.com/fclairamb/ssf/internal/tui"
+	"github.com/fclairamb/muster/internal/notify"
+	"github.com/fclairamb/muster/internal/orgprefix"
+	"github.com/fclairamb/muster/internal/registry"
+	"github.com/fclairamb/muster/internal/render"
+	"github.com/fclairamb/muster/internal/repoinfo"
+	"github.com/fclairamb/muster/internal/session"
+	"github.com/fclairamb/muster/internal/slug"
+	"github.com/fclairamb/muster/internal/state"
+	"github.com/fclairamb/muster/internal/state/watcher"
+	"github.com/fclairamb/muster/internal/tui"
 )
 
 // repoRoot returns the absolute path to the project root by walking up from
