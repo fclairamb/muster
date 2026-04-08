@@ -100,7 +100,7 @@ func TestVersionSubcommand(t *testing.T) {
 	}
 	bin := buildBinary(t)
 	out := runBin(t, bin, t.TempDir(), "version")
-	if !strings.Contains(out, "ssf version") {
+	if !strings.Contains(out, "muster version") {
 		t.Fatalf("unexpected: %q", out)
 	}
 }

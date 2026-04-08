@@ -13,7 +13,7 @@ import (
 	"github.com/fclairamb/muster/internal/files"
 )
 
-// filesCommand returns the hidden `ssf files <dir>` subcommand. It's spawned
+// filesCommand returns the hidden `muster files <dir>` subcommand. It's spawned
 // by the tmux right pane and runs forever until cancelled.
 func filesCommand() *cli.Command {
 	return &cli.Command{
@@ -27,7 +27,7 @@ func filesCommand() *cli.Command {
 
 func runFiles(ctx context.Context, cmd *cli.Command) error {
 	if cmd.Args().Len() < 1 {
-		return fmt.Errorf("usage: ssf files <dir>")
+		return fmt.Errorf("usage: muster files <dir>")
 	}
 	dir := cmd.Args().First()
 

@@ -1,4 +1,4 @@
-// Package config loads and persists the on-disk ssf configuration.
+// Package config loads and persists the on-disk muster configuration.
 package config
 
 import (
@@ -10,7 +10,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Config is the on-disk shape of ~/.config/ssf/config.toml.
+// Config is the on-disk shape of ~/.config/muster/config.toml.
 type Config struct {
 	Dirs     []Dir    `toml:"dirs"`
 	Settings Settings `toml:"settings"`
@@ -29,13 +29,13 @@ type Settings struct {
 	OrgOverrides map[string]string `toml:"org_overrides"`
 
 	// ClaudeArgs are the extra arguments passed to the claude binary every
-	// time ssf launches a new tmux session. nil (unset) → use the default
+	// time muster launches a new tmux session. nil (unset) → use the default
 	// of {"--dangerously-skip-permissions"}. An explicit empty array in
 	// the config file means "no extra args".
 	ClaudeArgs *[]string `toml:"claude_args"`
 
-	// SidePanel controls whether ssf splits the tmux window when starting
-	// a new session and runs `ssf files` in the right pane. nil → default
+	// SidePanel controls whether muster splits the tmux window when starting
+	// a new session and runs `muster files` in the right pane. nil → default
 	// true. The split is also gated on terminal width (skipped on narrow
 	// terminals regardless of this setting).
 	SidePanel *bool `toml:"side_panel"`
@@ -44,13 +44,13 @@ type Settings struct {
 // DefaultPath returns the location of the config file, honoring XDG_CONFIG_HOME.
 func DefaultPath() (string, error) {
 	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
-		return filepath.Join(x, "ssf", "config.toml"), nil
+		return filepath.Join(x, "muster", "config.toml"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home dir: %w", err)
 	}
-	return filepath.Join(home, ".config", "ssf", "config.toml"), nil
+	return filepath.Join(home, ".config", "muster", "config.toml"), nil
 }
 
 // Load reads the config from path. A missing file returns an empty Config and no error.

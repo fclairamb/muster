@@ -54,19 +54,19 @@ func (d *Dispatcher) Handle(ev watcher.Event) {
 	switch ev.State.Kind {
 	case state.KindReady:
 		_ = d.notifier.Notify(Notification{
-			Title:    "ssf",
+			Title:    "muster",
 			Subtitle: d.name(ev.Slug),
 			Body:     "Ready",
 			Sound:    "Glass",
-			Group:    "ssf-" + ev.Slug,
+			Group:    "muster-" + ev.Slug,
 		})
 	case state.KindWaitingInput:
 		_ = d.notifier.Notify(Notification{
-			Title:    "ssf",
+			Title:    "muster",
 			Subtitle: d.name(ev.Slug),
 			Body:     "Needs input",
 			Sound:    "Funk",
-			Group:    "ssf-" + ev.Slug,
+			Group:    "muster-" + ev.Slug,
 		})
 	}
 }
