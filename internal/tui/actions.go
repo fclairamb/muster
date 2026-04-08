@@ -46,6 +46,11 @@ type Deps struct {
 	// suspension while the user is attached to a tmux session). The
 	// returned State.Ts is used for staleness decay.
 	ReadState func(repoRoot, slug string) state.State
+
+	// ClearState writes a fresh KindIdle state for the given slug. Used
+	// after the user detaches from a session that was sitting on
+	// KindReady — the green dot should clear to white once viewed.
+	ClearState func(repoRoot, slug string) error
 }
 
 // BuildWorktreeAddArgs returns the git argv for adding a new worktree.

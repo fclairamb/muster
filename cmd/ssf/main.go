@@ -286,6 +286,13 @@ func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Ent
 			st, _ := state.Read(repoRoot, slug)
 			return st
 		},
+		ClearState: func(repoRoot, slug string) error {
+			return state.Write(repoRoot, slug, state.State{
+				Kind:    state.KindIdle,
+				Ts:      time.Now().UTC(),
+				Session: session.SessionPrefix + slug,
+			})
+		},
 	}
 	deps.FileManager = cfg.Settings.ResolveFileManager()
 	deps.Editor = cfg.Settings.ResolveEditor()

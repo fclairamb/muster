@@ -101,6 +101,11 @@ type RefreshMsg struct{}
 // ssf is invoked with a directory argument.
 type AttachMsg struct{ Slug string }
 
+// attachExitedMsg is emitted by the tea.ExecProcess callback once the user
+// detaches from a tmux session. It carries the slug so the post-detach
+// handler can clear a sticky "ready" state back to "idle".
+type attachExitedMsg struct{ slug string }
+
 // StateMsg notifies the model that one entry's session state has changed.
 // Sent from the watcher pump goroutine via program.Send.
 type StateMsg struct {
@@ -127,6 +132,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case attachExitedMsg:
+		// If the entry was sitting on "ready" (green) when the user
+		// detached, clear it back to "idle" so the green dot doesn't
+		// keep nagging after the user has already seen the result.
+		if m.deps.ClearState != nil && m.deps.ReadState != nil {
+			for _, e := range m.entries {
+				if e.Slug != msg.slug {
+					continue
+				}
+				root := e.RepoRoot
+				if root == "" {
+					root = e.Path
+				}
+				st := m.deps.ReadState(root, e.Slug)
+				if st.Kind == state.KindReady {
+					_ = m.deps.ClearState(root, e.Slug)
+				}
+				break
+			}
+		}
+		return m.applyRefresh(), nil
 	}
 	return m, nil
 }
@@ -374,9 +400,12 @@ func (m Model) actionEnter() (tea.Model, tea.Cmd) {
 	if m.deps.AttachCmdFunc != nil {
 		cmd := m.deps.AttachCmdFunc(entry.Slug)
 		if cmd != nil {
+			slug := entry.Slug
 			return m, tea.Sequence(
 				tea.SetWindowTitle(titleAttached(*entry)),
-				tea.ExecProcess(cmd, func(error) tea.Msg { return RefreshMsg{} }),
+				tea.ExecProcess(cmd, func(error) tea.Msg {
+					return attachExitedMsg{slug: slug}
+				}),
 				tea.SetWindowTitle(titleListView),
 			)
 		}
