@@ -48,21 +48,30 @@ func runTmux(args ...string) (string, error) {
 // already exists. When SidePanel is enabled and the terminal is wide enough,
 // also splits the window and runs `muster files <cwd>` in the right pane.
 func (t Tmux) Start(slug, cwd string) error {
-	if t.Has(slug) {
+	existed := t.Has(slug)
+	if !existed {
+		if _, err := runTmux(buildStartArgs(slug, cwd, claudeBinary(), t.ClaudeArgs)...); err != nil {
+			return err
+		}
+	}
+	if existed && t.shouldSplit() {
+		// Resize the right pane on every attach so old sessions self-heal.
+		_, _ = runTmux("-L", SocketName, "resize-pane", "-t", SessionPrefix+slug+":0.1", "-x", "20")
 		return nil
 	}
-	if _, err := runTmux(buildStartArgs(slug, cwd, claudeBinary(), t.ClaudeArgs)...); err != nil {
-		return err
+	if existed {
+		return nil
 	}
 	if t.shouldSplit() {
 		bin := t.SsfBinary
 		if bin == "" {
 			bin = "muster"
 		}
-		// Split horizontally, give the right pane 30%, run `muster files`.
+		// Split horizontally and give the new (right) pane a fixed 20-col
+		// width. `-l 24` is cells (not a percentage — that would need `%`).
 		_, _ = runTmux(
 			"-L", SocketName,
-			"split-window", "-h", "-l", "30%",
+			"split-window", "-h", "-l", "20",
 			"-t", SessionPrefix+slug+":0",
 			"-c", cwd,
 			bin+" files "+cwd,
