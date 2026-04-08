@@ -32,8 +32,19 @@ type hookEvent struct {
 	Kind    string
 }
 
-// SettingsPath is the path to a repo's local Claude Code settings file.
-func SettingsPath(repoRoot string) string {
+// SettingsLocalPath is the path to a repo's local (gitignored) Claude Code
+// settings file. muster writes hook entries here so they never end up in
+// commits or merge conflicts. Claude Code merges this file on top of the
+// committed settings.json automatically.
+func SettingsLocalPath(repoRoot string) string {
+	return filepath.Join(repoRoot, ".claude", "settings.local.json")
+}
+
+// SettingsSharedPath is the team-shared, committed Claude Code settings
+// file. muster only reads/scrubs it (never writes muster hook entries to
+// it) so historical or upgraded installations can be moved into
+// settings.local.json.
+func SettingsSharedPath(repoRoot string) string {
 	return filepath.Join(repoRoot, ".claude", "settings.json")
 }
 
@@ -53,10 +64,23 @@ func command(slug, kind string) string {
 	return "muster hook write " + slug + " " + kind
 }
 
-// Install merges muster hook entries into <repoRoot>/.claude/settings.json,
-// preserving any unrelated keys. Idempotent.
+// Install merges muster hook entries into
+// <repoRoot>/.claude/settings.local.json, preserving any unrelated keys.
+// Idempotent. As a courtesy, it also scrubs any matching slug entries from
+// the committed .claude/settings.json so users upgrading from an older
+// muster don't keep stale per-project entries floating around in commits,
+// and ensures .gitignore mentions settings.local.json.
 func Install(repoRoot, slug string) error {
-	settings, err := loadSettings(repoRoot)
+	if err := scrubSlugFromShared(repoRoot, slug); err != nil {
+		return err
+	}
+	if err := EnsureGitignored(repoRoot); err != nil {
+		// Non-fatal: the install itself succeeds. Log via stderr-style
+		// return only if you want; here we silently ignore so a read-only
+		// or unusual repo doesn't block hook installation.
+		_ = err
+	}
+	settings, err := loadSettings(SettingsLocalPath(repoRoot))
 	if err != nil {
 		return err
 	}
@@ -64,54 +88,116 @@ func Install(repoRoot, slug string) error {
 	if hooks == nil {
 		hooks = make(map[string]any)
 	}
-
 	for _, ev := range hookEvents {
 		cmd := command(slug, ev.Kind)
 		appendHook(hooks, ev.Event, ev.Matcher, cmd)
 	}
 	settings["hooks"] = hooks
-	return saveSettings(repoRoot, settings)
+	return saveSettings(SettingsLocalPath(repoRoot), settings)
 }
 
 // UninstallLegacy strips any leftover hook entries whose command starts with
 // "ssf hook write " — the literal used by the project's previous name. Used
 // by `muster migrate` to scrub legacy installations before re-installing the
-// new commands. Independent of slug.
+// new commands. Independent of slug. Scrubs both the local and the shared
+// settings file so historical installs in either location are cleaned up.
 func UninstallLegacy(repoRoot string) error {
-	settings, err := loadSettings(repoRoot)
-	if err != nil {
-		return err
+	for _, p := range []string{SettingsLocalPath(repoRoot), SettingsSharedPath(repoRoot)} {
+		if err := mutateSettings(p, func(hooks map[string]any) {
+			for _, ev := range hookEvents {
+				removeHookByPrefix(hooks, ev.Event, "ssf hook write ")
+			}
+		}); err != nil {
+			return err
+		}
 	}
-	hooks, _ := settings["hooks"].(map[string]any)
-	if hooks == nil {
-		return nil
-	}
-	for _, ev := range hookEvents {
-		removeHookByPrefix(hooks, ev.Event, "ssf hook write ")
-	}
-	settings["hooks"] = hooks
-	return saveSettings(repoRoot, settings)
+	return nil
 }
 
-// Uninstall removes only the entries whose command matches our slug.
+// Uninstall removes only the entries whose command matches our slug. Cleans
+// both files so an older install in the shared file is also removed.
 func Uninstall(repoRoot, slug string) error {
-	settings, err := loadSettings(repoRoot)
+	for _, p := range []string{SettingsLocalPath(repoRoot), SettingsSharedPath(repoRoot)} {
+		if err := mutateSettings(p, func(hooks map[string]any) {
+			for _, ev := range hookEvents {
+				removeHook(hooks, ev.Event, slug)
+			}
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// scrubSlugFromShared removes any muster hook entries for slug from the
+// committed .claude/settings.json. Used when (re)installing into the local
+// file so a stale shared-file install left over from a previous muster
+// version is cleaned up automatically.
+func scrubSlugFromShared(repoRoot, slug string) error {
+	return mutateSettings(SettingsSharedPath(repoRoot), func(hooks map[string]any) {
+		for _, ev := range hookEvents {
+			removeHook(hooks, ev.Event, slug)
+		}
+	})
+}
+
+// mutateSettings loads a settings file, applies fn to its hooks map, then
+// saves the result. If the file doesn't exist, fn is not called. After fn
+// runs, an empty hooks map is dropped from the settings object, and an
+// empty settings object causes the file to be removed entirely so muster
+// never leaves an empty stub behind.
+func mutateSettings(path string, fn func(hooks map[string]any)) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	}
+	settings, err := loadSettings(path)
 	if err != nil {
 		return err
 	}
 	hooks, _ := settings["hooks"].(map[string]any)
 	if hooks == nil {
+		hooks = make(map[string]any)
+	}
+	fn(hooks)
+	if len(hooks) == 0 {
+		delete(settings, "hooks")
+	} else {
+		settings["hooks"] = hooks
+	}
+	if len(settings) == 0 {
+		_ = os.Remove(path)
 		return nil
 	}
-	for _, ev := range hookEvents {
-		removeHook(hooks, ev.Event, slug)
-	}
-	settings["hooks"] = hooks
-	return saveSettings(repoRoot, settings)
+	return saveSettings(path, settings)
 }
 
-func loadSettings(repoRoot string) (map[string]any, error) {
-	b, err := os.ReadFile(SettingsPath(repoRoot))
+// EnsureGitignored appends `.claude/settings.local.json` to <repoRoot>/.gitignore
+// when not already present, so the file muster writes never sneaks into a
+// commit. No-op when the entry is already covered.
+func EnsureGitignored(repoRoot string) error {
+	gi := filepath.Join(repoRoot, ".gitignore")
+	existing, err := os.ReadFile(gi)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	target := ".claude/settings.local.json"
+	for _, line := range strings.Split(string(existing), "\n") {
+		l := strings.TrimSpace(line)
+		if l == target || l == "/"+target || l == ".claude/" || l == ".claude" {
+			return nil
+		}
+	}
+	var b strings.Builder
+	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n") {
+		b.WriteString("\n")
+	}
+	b.WriteString(target)
+	b.WriteString("\n")
+	return os.WriteFile(gi, append(existing, []byte(b.String())...), 0o644)
+}
+
+func loadSettings(path string) (map[string]any, error) {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return map[string]any{}, nil
@@ -128,8 +214,8 @@ func loadSettings(repoRoot string) (map[string]any, error) {
 	return m, nil
 }
 
-func saveSettings(repoRoot string, m map[string]any) error {
-	dir := filepath.Dir(SettingsPath(repoRoot))
+func saveSettings(path string, m map[string]any) error {
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("mkdir settings dir: %w", err)
 	}
@@ -151,7 +237,7 @@ func saveSettings(repoRoot string, m map[string]any) error {
 		_ = os.Remove(tmpName)
 		return err
 	}
-	return os.Rename(tmpName, SettingsPath(repoRoot))
+	return os.Rename(tmpName, path)
 }
 
 // appendHook adds a hook entry of the form

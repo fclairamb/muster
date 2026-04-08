@@ -88,17 +88,31 @@ func TestMigrateEndToEnd(t *testing.T) {
 	if _, err := os.Stat(legacyState); !os.IsNotExist(err) {
 		t.Fatalf(".ssf/state should be gone after rename: %v", err)
 	}
-	// 4. .claude/settings.json was scrubbed of legacy entries and now
-	//    references muster hook write.
-	settingsBytes, err := os.ReadFile(filepath.Join(repo, ".claude", "settings.json"))
+	// 4. .claude/settings.json contained ONLY a legacy ssf entry; after
+	//    migration the legacy entry is scrubbed AND the empty stub file
+	//    is removed entirely. The muster entries land in settings.local.json
+	//    where they don't pollute commits.
+	if _, err := os.Stat(filepath.Join(repo, ".claude", "settings.json")); !os.IsNotExist(err) {
+		b, _ := os.ReadFile(filepath.Join(repo, ".claude", "settings.json"))
+		t.Fatalf("legacy settings.json should be removed, still exists:\n%s", b)
+	}
+	localBytes, err := os.ReadFile(filepath.Join(repo, ".claude", "settings.local.json"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("settings.local.json missing: %v", err)
 	}
-	if strings.Contains(string(settingsBytes), "ssf hook write") {
-		t.Fatalf("legacy hook entry survived migration:\n%s", settingsBytes)
+	if strings.Contains(string(localBytes), "ssf hook write") {
+		t.Fatalf("legacy hook entry survived migration:\n%s", localBytes)
 	}
-	if !strings.Contains(string(settingsBytes), "muster hook write") {
-		t.Fatalf("muster hook entry not installed:\n%s", settingsBytes)
+	if !strings.Contains(string(localBytes), "muster hook write") {
+		t.Fatalf("muster hook entry not installed:\n%s", localBytes)
+	}
+	// 5. .gitignore was updated to ignore the new file.
+	gi, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	if err != nil {
+		t.Fatalf(".gitignore not created: %v", err)
+	}
+	if !strings.Contains(string(gi), ".claude/settings.local.json") {
+		t.Fatalf(".gitignore missing entry:\n%s", gi)
 	}
 
 	// Idempotency: re-running migrate should be a no-op (no error).

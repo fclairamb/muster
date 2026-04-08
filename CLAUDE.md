@@ -33,9 +33,13 @@ internal/render/      Pure function building display strings from (Dir, Info,
 internal/state/       On-disk state file format and atomic read/write.
 internal/state/watcher/ fsnotify-based watcher with debounce + green-confirm
                        heuristic. Dispatches to tui.StateMsg via program.Send.
-internal/hooks/       Claude Code hook installer. Merges into .claude/settings.json
-                       preserving unrelated keys. Supports the optional matcher
-                       field for PreToolUse/PostToolUse on AskUserQuestion.
+internal/hooks/       Claude Code hook installer. Merges into the gitignored
+                       .claude/settings.local.json (NEVER the committed
+                       settings.json), preserving unrelated keys. Auto-scrubs
+                       any stale slug entries from settings.json on (re)install
+                       and ensures .gitignore covers the new file. Supports
+                       the optional matcher field for PreToolUse/PostToolUse
+                       on AskUserQuestion.
 internal/session/     tmux Manager interface + Tmux impl (dedicated -L muster socket)
                        + FakeManager. Handles the split-window for the side panel.
 internal/notify/      Notifier interface + OsascriptNotifier + TerminalNotifier
@@ -66,8 +70,9 @@ the first collision-driven rename. Enforced by the slice 02 spec.
 
 ### `muster hook write <slug> <kind>` is a public contract
 
-Every `.claude/settings.json` muster installs hard-codes this literal command
-string. Renaming the subcommand or reordering arguments breaks every
+Every `.claude/settings.local.json` muster installs hard-codes this literal
+command string (older installs landed in `.claude/settings.json`; the
+installer scrubs them automatically on the next muster run). Renaming the subcommand or reordering arguments breaks every
 existing installation. There's a warning comment in
 `internal/hooks/hooks.go` next to `command()` and in
 `cmd/muster/main.go`'s `hookCommand()`. Don't rename, don't reorder. If you
