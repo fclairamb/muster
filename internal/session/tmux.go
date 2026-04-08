@@ -13,6 +13,20 @@ type Tmux struct {
 	// ClaudeArgs are appended to the claude binary when starting a new
 	// session. nil means "no extra args".
 	ClaudeArgs []string
+
+	// SidePanel, when true, splits the tmux window after creating it and
+	// runs `ssf files <cwd>` in the right pane. Gated on TerminalWidth.
+	SidePanel bool
+
+	// SsfBinary is the path to the ssf binary used for the side panel
+	// command. Defaults to "ssf" (resolved via PATH) when empty.
+	SsfBinary string
+
+	// TerminalWidth is the user's current terminal width in columns,
+	// captured before tmux suspends ssf. The side panel is skipped when
+	// this is below MinPanelWidth (or 100 if MinPanelWidth is zero).
+	TerminalWidth int
+	MinPanelWidth int
 }
 
 // NewTmux returns a new tmux Manager with no extra claude args.
@@ -31,13 +45,46 @@ func runTmux(args ...string) (string, error) {
 }
 
 // Start spawns a detached tmux session running claude in cwd. No-op if it
-// already exists.
+// already exists. When SidePanel is enabled and the terminal is wide enough,
+// also splits the window and runs `ssf files <cwd>` in the right pane.
 func (t Tmux) Start(slug, cwd string) error {
 	if t.Has(slug) {
 		return nil
 	}
-	_, err := runTmux(buildStartArgs(slug, cwd, claudeBinary(), t.ClaudeArgs)...)
-	return err
+	if _, err := runTmux(buildStartArgs(slug, cwd, claudeBinary(), t.ClaudeArgs)...); err != nil {
+		return err
+	}
+	if t.shouldSplit() {
+		bin := t.SsfBinary
+		if bin == "" {
+			bin = "ssf"
+		}
+		// Split horizontally, give the right pane 30%, run `ssf files`.
+		_, _ = runTmux(
+			"-L", SocketName,
+			"split-window", "-h", "-l", "30%",
+			"-t", SessionPrefix+slug+":0",
+			"-c", cwd,
+			bin+" files "+cwd,
+		)
+		// Focus the left pane (claude) so the user lands there on attach.
+		_, _ = runTmux("-L", SocketName, "select-pane", "-t", SessionPrefix+slug+":0.0")
+	}
+	return nil
+}
+
+func (t Tmux) shouldSplit() bool {
+	if !t.SidePanel {
+		return false
+	}
+	min := t.MinPanelWidth
+	if min == 0 {
+		min = 100
+	}
+	if t.TerminalWidth > 0 && t.TerminalWidth < min {
+		return false
+	}
+	return true
 }
 
 // Has reports whether a session for slug exists.

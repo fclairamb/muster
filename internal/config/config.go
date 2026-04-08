@@ -33,6 +33,12 @@ type Settings struct {
 	// of {"--dangerously-skip-permissions"}. An explicit empty array in
 	// the config file means "no extra args".
 	ClaudeArgs *[]string `toml:"claude_args"`
+
+	// SidePanel controls whether ssf splits the tmux window when starting
+	// a new session and runs `ssf files` in the right pane. nil → default
+	// true. The split is also gated on terminal width (skipped on narrow
+	// terminals regardless of this setting).
+	SidePanel *bool `toml:"side_panel"`
 }
 
 // DefaultPath returns the location of the config file, honoring XDG_CONFIG_HOME.
@@ -110,6 +116,15 @@ func (s Settings) ResolveClaudeArgs() []string {
 		return []string{"--dangerously-skip-permissions"}
 	}
 	return *s.ClaudeArgs
+}
+
+// ResolveSidePanel returns whether the side panel should be enabled,
+// defaulting to true when unset.
+func (s Settings) ResolveSidePanel() bool {
+	if s.SidePanel == nil {
+		return true
+	}
+	return *s.SidePanel
 }
 
 // ResolveEditor returns the configured editor, falling back to $VISUAL, $EDITOR, then "zed".
