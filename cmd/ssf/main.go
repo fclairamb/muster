@@ -14,6 +14,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/urfave/cli/v3"
+	xterm "golang.org/x/term"
 
 	"github.com/fclairamb/ssf/internal/config"
 	"github.com/fclairamb/ssf/internal/hooks"
@@ -87,6 +88,7 @@ func newApp() *cli.Command {
 			rmCommand(),
 			versionCommand(),
 			hookCommand(),
+			filesCommand(),
 		},
 	}
 }
@@ -271,6 +273,13 @@ func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Ent
 
 	tmux := session.NewTmux()
 	tmux.ClaudeArgs = cfg.Settings.ResolveClaudeArgs()
+	tmux.SidePanel = cfg.Settings.ResolveSidePanel()
+	if w, _, err := termGetSize(); err == nil {
+		tmux.TerminalWidth = w
+	}
+	if exe, err := os.Executable(); err == nil {
+		tmux.SsfBinary = exe
+	}
 
 	deps := tui.Deps{
 		Session: tmux,
@@ -384,6 +393,17 @@ func (realGit) IsDirty(dir string) (bool, error) {
 		return false, err
 	}
 	return len(out) > 0, nil
+}
+
+// termGetSize returns the controlling terminal width/height, falling back
+// to stdin if stdout isn't a tty (e.g. in tests).
+func termGetSize() (int, int, error) {
+	for _, fd := range []int{int(os.Stdout.Fd()), int(os.Stdin.Fd())} {
+		if w, h, err := xterm.GetSize(fd); err == nil {
+			return w, h, nil
+		}
+	}
+	return 0, 0, fmt.Errorf("not a terminal")
 }
 
 // realOpener spawns external GUI tools (file manager, editor) and returns

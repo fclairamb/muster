@@ -132,4 +132,11 @@ The `ssf files` subcommand should exit on Ctrl+C and not leak goroutines.
 
 ## Implementation Plan
 
-(filled in by /implement-todos)
+1. `internal/files/files.go` — pure rendering: `Status` struct (header, modified, staged, untracked) + `Render(w io.Writer, dir string)` that shells out to git and prints colorized sections.
+2. `internal/files/watcher.go` — fsnotify on the working tree with skip list, debounced 250ms, plus 5s safety polling. Emits a tick channel.
+3. `cmd/ssf/files.go` — hidden `files` subcommand: hooks up the watcher and renders on every tick. Honors ctx cancellation.
+4. `internal/config/config.go` — add `SidePanel *bool` and `ResolveSidePanel()` defaulting to true.
+5. `internal/session/tmux.go` — add `SidePanel bool` and `MinPanelWidth int` fields. `Start` does the split-window dance when both conditions hold. New `togglePanelBinding` set via `tmux bind-key` for prefix+f.
+6. `cmd/ssf/main.go` — wire `SidePanel` from settings into `Tmux`. Width check via `golang.org/x/term`.
+7. Tests: config defaults, files render fixture, tmux integration test under tmux tag.
+8. QA + install.

@@ -122,6 +122,21 @@ func TestResolveClaudeArgsCustom(t *testing.T) {
 	}
 }
 
+func TestResolveSidePanelDefault(t *testing.T) {
+	s := Settings{}
+	if !s.ResolveSidePanel() {
+		t.Fatal("default should be true")
+	}
+}
+
+func TestResolveSidePanelExplicitFalse(t *testing.T) {
+	f := false
+	s := Settings{SidePanel: &f}
+	if s.ResolveSidePanel() {
+		t.Fatal("explicit false should be honored")
+	}
+}
+
 func TestSettingsEnvFallback(t *testing.T) {
 	t.Setenv("FILE_MANAGER", "ranger")
 	t.Setenv("EDITOR", "vi")

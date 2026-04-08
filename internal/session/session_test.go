@@ -50,6 +50,27 @@ func TestFakeManagerLifecycle(t *testing.T) {
 	}
 }
 
+func TestShouldSplitGating(t *testing.T) {
+	cases := []struct {
+		name string
+		t    Tmux
+		want bool
+	}{
+		{"disabled", Tmux{SidePanel: false, TerminalWidth: 200}, false},
+		{"narrow terminal", Tmux{SidePanel: true, TerminalWidth: 80}, false},
+		{"wide terminal", Tmux{SidePanel: true, TerminalWidth: 120}, true},
+		{"unknown width assumes wide", Tmux{SidePanel: true, TerminalWidth: 0}, true},
+		{"custom min", Tmux{SidePanel: true, TerminalWidth: 90, MinPanelWidth: 80}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.t.shouldSplit(); got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestClaudeBinaryEnv(t *testing.T) {
 	t.Setenv("SSF_CLAUDE_BINARY", "/path/to/fake")
 	if got := claudeBinary(); got != "/path/to/fake" {
