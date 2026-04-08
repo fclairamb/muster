@@ -9,11 +9,11 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/fclairamb/ssf/internal/config"
-	"github.com/fclairamb/ssf/internal/hooks"
-	"github.com/fclairamb/ssf/internal/registry"
-	"github.com/fclairamb/ssf/internal/repoinfo"
-	"github.com/fclairamb/ssf/internal/slug"
+	"github.com/fclairamb/muster/internal/config"
+	"github.com/fclairamb/muster/internal/hooks"
+	"github.com/fclairamb/muster/internal/registry"
+	"github.com/fclairamb/muster/internal/repoinfo"
+	"github.com/fclairamb/muster/internal/slug"
 )
 
 func rmCommand() *cli.Command {

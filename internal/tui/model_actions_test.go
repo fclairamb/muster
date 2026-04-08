@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/fclairamb/ssf/internal/session"
-	"github.com/fclairamb/ssf/internal/state"
+	"github.com/fclairamb/muster/internal/session"
+	"github.com/fclairamb/muster/internal/state"
 )
 
 func actionDeps() (*session.FakeManager, *FakeGit, *FakeOpener, Deps) {

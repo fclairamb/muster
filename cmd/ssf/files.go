@@ -10,7 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"golang.org/x/term"
 
-	"github.com/fclairamb/ssf/internal/files"
+	"github.com/fclairamb/muster/internal/files"
 )
 
 // filesCommand returns the hidden `ssf files <dir>` subcommand. It's spawned

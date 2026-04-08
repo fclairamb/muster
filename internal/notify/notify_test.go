@@ -3,8 +3,8 @@ package notify
 import (
 	"testing"
 
-	"github.com/fclairamb/ssf/internal/state"
-	"github.com/fclairamb/ssf/internal/state/watcher"
+	"github.com/fclairamb/muster/internal/state"
+	"github.com/fclairamb/muster/internal/state/watcher"
 )
 
 func TestEscape(t *testing.T) {
