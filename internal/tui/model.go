@@ -122,8 +122,9 @@ type Model struct {
 	search    string
 
 	modal      modalKind
-	modalInput string
-	modalForce bool
+	modalInput        string
+	modalForce        bool
+	modalWtFromMain   bool
 	modalErr   string
 
 	// Branch picker state. Active when modal == modalBranchPicker.
@@ -159,6 +160,20 @@ type Model struct {
 	nextOpID int
 	inflight map[int]string
 	opOrder  []int
+
+	// killing tracks slugs whose tmux session is currently being torn down
+	// by an in-flight Session.Kill call. While a slug is in this set the
+	// reconciliation loop forces its Kind to KindKilling regardless of what
+	// the on-disk state file or live session list says, so the row renders
+	// grey and sorts below the white "no session" rows.
+	killing map[string]bool
+}
+
+// killDoneMsg is delivered when an async Session.Kill goroutine returns.
+type killDoneMsg struct {
+	slug string
+	root string
+	err  error
 }
 
 // opMsg wraps the result of a tracked long-running command. Update unwraps
@@ -382,6 +397,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case killDoneMsg:
+		delete(m.killing, msg.slug)
+		if msg.err != nil {
+			m.lastError = msg.err.Error()
+		} else if m.deps.ClearState != nil {
+			_ = m.deps.ClearState(msg.root, msg.slug)
+		}
+		return m.applyRefresh(), nil
 	case attachExitedMsg:
 		// If the entry was sitting on "ready" (green) when the user
 		// detached, clear it back to "idle" so the green dot doesn't
@@ -456,6 +479,9 @@ func (m Model) applyRefresh() Model {
 				k = state.KindNone
 			}
 		}
+		if m.killing[slug] {
+			k = state.KindKilling
+		}
 		m.entries[i].Kind = k
 	}
 	m.entries = SortEntries(m.entries)
@@ -514,6 +540,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.modal = modalBranchPrompt
 		m.modalInput = ""
 		m.modalErr = ""
+		m.modalWtFromMain = false
+	case "W":
+		m.modal = modalBranchPrompt
+		m.modalInput = ""
+		m.modalErr = ""
+		m.modalWtFromMain = true
 	case "n":
 		return m.actionNewInstance()
 	case "b":
@@ -576,8 +608,17 @@ func (m Model) handleBranchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		if m.deps.Git != nil {
-			args := BuildWorktreeAddArgs(entry.Path, m.modalInput)
-			id := (&m).beginOp("git worktree add " + m.modalInput)
+			var args []string
+			if m.modalWtFromMain {
+				args = BuildWorktreeAddFromMainArgs(entry.Path, m.modalInput)
+			} else {
+				args = BuildWorktreeAddArgs(entry.Path, m.modalInput)
+			}
+			label := "git worktree add " + m.modalInput
+			if m.modalWtFromMain {
+				label += " (from main)"
+			}
+			id := (&m).beginOp(label)
 			git := m.deps.Git
 			parentSlug := entry.Slug
 			branch := m.modalInput
@@ -975,18 +1016,21 @@ func (m Model) actionKill() (tea.Model, tea.Cmd) {
 	if !m.deps.Session.Has(entry.Slug) {
 		return m, nil
 	}
-	if err := m.deps.Session.Kill(entry.Slug); err != nil {
-		m.lastError = err.Error()
-		return m, nil
+	root := entry.RepoRoot
+	if root == "" {
+		root = entry.Path
 	}
-	if m.deps.ClearState != nil {
-		root := entry.RepoRoot
-		if root == "" {
-			root = entry.Path
-		}
-		_ = m.deps.ClearState(root, entry.Slug)
+	slug := entry.Slug
+	if m.killing == nil {
+		m.killing = map[string]bool{}
 	}
-	return m.applyRefresh(), nil
+	m.killing[slug] = true
+	sess := m.deps.Session
+	cmd := func() tea.Msg {
+		err := sess.Kill(slug)
+		return killDoneMsg{slug: slug, root: root, err: err}
+	}
+	return m.applyRefresh(), cmd
 }
 
 // actionGit runs a git command in the selected entry's directory and surfaces
@@ -1287,6 +1331,8 @@ func StatusEmoji(k state.Kind) string {
 		return "🟡"
 	case state.KindIdle:
 		return "⚪"
+	case state.KindKilling:
+		return "⚫"
 	default:
 		return "  "
 	}

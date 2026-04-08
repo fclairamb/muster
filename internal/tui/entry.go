@@ -46,6 +46,8 @@ func kindRank(k state.Kind) int {
 		return 2
 	case state.KindIdle:
 		return 3
+	case state.KindKilling:
+		return 5
 	default:
 		return 4
 	}

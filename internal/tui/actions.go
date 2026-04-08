@@ -86,6 +86,12 @@ func BuildWorktreeAddArgs(repo, branch string) []string {
 	return []string{"-C", repo, "worktree", "add", target, "-b", branch}
 }
 
+// BuildWorktreeAddFromMainArgs is like BuildWorktreeAddArgs but explicitly
+// branches off main rather than the current HEAD.
+func BuildWorktreeAddFromMainArgs(repo, branch string) []string {
+	return append(BuildWorktreeAddArgs(repo, branch), "main")
+}
+
 // BuildBranchListArgs returns the git argv for listing local branch names,
 // one per line, no decoration.
 func BuildBranchListArgs(repo string) []string {

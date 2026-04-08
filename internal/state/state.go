@@ -18,6 +18,7 @@ const (
 	KindWorking      Kind = "working"       // mid-prompt
 	KindReady        Kind = "ready"         // green: result ready
 	KindWaitingInput Kind = "waiting_input" // red: needs user
+	KindKilling      Kind = "killing"       // grey: tmux session is being torn down
 )
 
 // State is the JSON shape written by hooks and consumed by the watcher.
