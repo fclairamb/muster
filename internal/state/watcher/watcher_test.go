@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fclairamb/ssf/internal/state"
+	"github.com/fclairamb/muster/internal/state"
 )
 
 func init() {

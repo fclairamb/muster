@@ -3,8 +3,8 @@ package notify
 import (
 	"testing"
 
-	"github.com/fclairamb/ssf/internal/state"
-	"github.com/fclairamb/ssf/internal/state/watcher"
+	"github.com/fclairamb/muster/internal/state"
+	"github.com/fclairamb/muster/internal/state/watcher"
 )
 
 func TestEscape(t *testing.T) {
@@ -85,8 +85,8 @@ func TestDispatcherEmitsSubtitleAndSound(t *testing.T) {
 		t.Fatalf("got %d calls", len(calls))
 	}
 	n := calls[0]
-	if n.Title != "ssf" {
-		t.Errorf("title = %q, want %q", n.Title, "ssf")
+	if n.Title != "muster" {
+		t.Errorf("title = %q, want %q", n.Title, "muster")
 	}
 	if n.Subtitle != "s/datalake [main]" {
 		t.Errorf("subtitle = %q", n.Subtitle)
@@ -94,7 +94,7 @@ func TestDispatcherEmitsSubtitleAndSound(t *testing.T) {
 	if n.Sound != "Glass" {
 		t.Errorf("sound = %q, want Glass for ready", n.Sound)
 	}
-	if n.Group != "ssf-abc" {
+	if n.Group != "muster-abc" {
 		t.Errorf("group = %q", n.Group)
 	}
 }

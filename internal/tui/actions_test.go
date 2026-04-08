@@ -7,7 +7,7 @@ import (
 
 func TestBuildWorktreeAddArgs(t *testing.T) {
 	got := BuildWorktreeAddArgs("/code/datalake", "feat/x")
-	want := []string{"-C", "/code/datalake", "worktree", "add", "/code/datalake/.ssf/worktrees/datalake-feat-x", "-b", "feat/x"}
+	want := []string{"-C", "/code/datalake", "worktree", "add", "/code/datalake/.muster/worktrees/datalake-feat-x", "-b", "feat/x"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}

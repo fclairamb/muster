@@ -8,8 +8,8 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/fclairamb/ssf/internal/config"
-	"github.com/fclairamb/ssf/internal/registry"
+	"github.com/fclairamb/muster/internal/config"
+	"github.com/fclairamb/muster/internal/registry"
 )
 
 func listCommand() *cli.Command {

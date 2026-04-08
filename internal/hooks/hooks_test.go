@@ -98,6 +98,38 @@ func TestInstallWritesAskUserQuestionMatcher(t *testing.T) {
 	}
 }
 
+func TestUninstallLegacy(t *testing.T) {
+	repo := t.TempDir()
+	if err := Install(repo, "abc"); err != nil {
+		t.Fatal(err)
+	}
+	// Inject a legacy `ssf hook write` entry by hand.
+	settings, _ := loadSettings(repo)
+	hooksMap, _ := settings["hooks"].(map[string]any)
+	stop, _ := hooksMap["Stop"].([]any)
+	stop = append(stop, map[string]any{
+		"hooks": []any{
+			map[string]any{"type": "command", "command": "ssf hook write abc ready"},
+		},
+	})
+	hooksMap["Stop"] = stop
+	settings["hooks"] = hooksMap
+	if err := saveSettings(repo, settings); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := UninstallLegacy(repo); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(SettingsPath(repo))
+	if strings.Contains(string(b), "ssf hook write") {
+		t.Fatalf("legacy entry survived: %s", b)
+	}
+	if !strings.Contains(string(b), "muster hook write") {
+		t.Fatalf("current entry removed by mistake: %s", b)
+	}
+}
+
 func TestUninstall(t *testing.T) {
 	repo := t.TempDir()
 	_ = Install(repo, "abc")

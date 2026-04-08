@@ -9,11 +9,11 @@ import (
 	"testing"
 )
 
-// buildBinary compiles the ssf binary into a tempdir and returns its path.
+// buildBinary compiles the muster binary into a tempdir and returns its path.
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "ssf")
+	bin := filepath.Join(dir, "muster")
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -72,7 +72,7 @@ func TestHelpFlag(t *testing.T) {
 	}
 	bin := buildBinary(t)
 	out := runBin(t, bin, t.TempDir(), "--help")
-	if !strings.Contains(out, "ssf") || !strings.Contains(out, "USAGE") {
+	if !strings.Contains(out, "muster") || !strings.Contains(out, "USAGE") {
 		t.Fatalf("--help did not produce help text:\n%s", out)
 	}
 }
@@ -83,8 +83,8 @@ func TestVersionFlag(t *testing.T) {
 	}
 	bin := buildBinary(t)
 	out := runBin(t, bin, t.TempDir(), "--version")
-	if !strings.Contains(out, "ssf") {
-		t.Fatalf("--version output missing 'ssf':\n%s", out)
+	if !strings.Contains(out, "muster") {
+		t.Fatalf("--version output missing 'muster':\n%s", out)
 	}
 }
 
@@ -117,13 +117,13 @@ func TestBareInvocationDoesNotRegisterCwd(t *testing.T) {
 	cmd.Dir = cwd
 	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg, "HOME="+xdg)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("bare ssf: %v %s", err, out)
+		t.Fatalf("bare muster: %v %s", err, out)
 	}
 	// Registry must remain empty.
-	cfg := filepath.Join(xdg, "ssf", "config.toml")
+	cfg := filepath.Join(xdg, "muster", "config.toml")
 	if b, err := os.ReadFile(cfg); err == nil {
 		if strings.Contains(string(b), cwd) {
-			t.Fatalf("bare ssf added cwd to registry:\n%s", b)
+			t.Fatalf("bare muster added cwd to registry:\n%s", b)
 		}
 	}
 }
@@ -159,7 +159,7 @@ func TestHookWriteCreatesStateFile(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("hook write: %v %s", err, out)
 	}
-	path := repo + "/.ssf/state/abc123.json"
+	path := repo + "/.muster/state/abc123.json"
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read state file: %v", err)

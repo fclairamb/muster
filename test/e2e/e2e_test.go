@@ -1,6 +1,6 @@
 //go:build e2e && tmux
 
-// Package e2e holds end-to-end integration tests for ssf.
+// Package e2e holds end-to-end integration tests for muster.
 package e2e
 
 import (
@@ -14,16 +14,16 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/fclairamb/ssf/internal/notify"
-	"github.com/fclairamb/ssf/internal/orgprefix"
-	"github.com/fclairamb/ssf/internal/registry"
-	"github.com/fclairamb/ssf/internal/render"
-	"github.com/fclairamb/ssf/internal/repoinfo"
-	"github.com/fclairamb/ssf/internal/session"
-	"github.com/fclairamb/ssf/internal/slug"
-	"github.com/fclairamb/ssf/internal/state"
-	"github.com/fclairamb/ssf/internal/state/watcher"
-	"github.com/fclairamb/ssf/internal/tui"
+	"github.com/fclairamb/muster/internal/notify"
+	"github.com/fclairamb/muster/internal/orgprefix"
+	"github.com/fclairamb/muster/internal/registry"
+	"github.com/fclairamb/muster/internal/render"
+	"github.com/fclairamb/muster/internal/repoinfo"
+	"github.com/fclairamb/muster/internal/session"
+	"github.com/fclairamb/muster/internal/slug"
+	"github.com/fclairamb/muster/internal/state"
+	"github.com/fclairamb/muster/internal/state/watcher"
+	"github.com/fclairamb/muster/internal/tui"
 )
 
 // repoRoot returns the absolute path to the project root by walking up from
@@ -49,8 +49,8 @@ func repoRoot(t *testing.T) string {
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "ssf")
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/ssf")
+	bin := filepath.Join(dir, "muster")
+	cmd := exec.Command("go", "build", "-o", bin, "./cmd/muster")
 	cmd.Dir = repoRoot(t)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -101,7 +101,7 @@ func TestFullPipeline(t *testing.T) {
 
 	bin := buildBinary(t)
 	xdg := t.TempDir()
-	t.Setenv("SSF_CLAUDE_BINARY", writeFakeClaude(t))
+	t.Setenv("MUSTER_CLAUDE_BINARY", writeFakeClaude(t))
 
 	// Build a fake git repo with an upstream remote.
 	repo := t.TempDir()
@@ -117,14 +117,14 @@ func TestFullPipeline(t *testing.T) {
 	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg, "HOME="+xdg)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("ssf register: %v %s", err, out)
+		t.Fatalf("muster register: %v %s", err, out)
 	}
 	if !strings.Contains(string(out), "s/datalake [") {
 		t.Fatalf("expected abbreviated display, got %q", out)
 	}
 
 	// Step 2: load registry → entries.
-	reg, err := registry.New(filepath.Join(xdg, "ssf", "config.toml"))
+	reg, err := registry.New(filepath.Join(xdg, "muster", "config.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestFullPipeline(t *testing.T) {
 		LastOpen: dirs[0].LastOpened,
 	}}
 
-	// Step 3: spin up the watcher and dispatcher. Ensure .ssf/state exists
+	// Step 3: spin up the watcher and dispatcher. Ensure .muster/state exists
 	// before watching so fsnotify can attach immediately.
 	if err := os.MkdirAll(state.DirPath(info.RepoRoot), 0o755); err != nil {
 		t.Fatal(err)

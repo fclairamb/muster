@@ -71,7 +71,7 @@ func TestDefaultPathHonorsXDG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("default path: %v", err)
 	}
-	if p != "/tmp/xdg/ssf/config.toml" {
+	if p != "/tmp/xdg/muster/config.toml" {
 		t.Fatalf("got %q", p)
 	}
 }

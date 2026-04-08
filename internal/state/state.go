@@ -29,12 +29,12 @@ type State struct {
 
 // FilePath returns the absolute path to the state file for slug under repoRoot.
 func FilePath(repoRoot, slug string) string {
-	return filepath.Join(repoRoot, ".ssf", "state", slug+".json")
+	return filepath.Join(repoRoot, ".muster", "state", slug+".json")
 }
 
-// DirPath returns the absolute path to the .ssf/state directory under repoRoot.
+// DirPath returns the absolute path to the .muster/state directory under repoRoot.
 func DirPath(repoRoot string) string {
-	return filepath.Join(repoRoot, ".ssf", "state")
+	return filepath.Join(repoRoot, ".muster", "state")
 }
 
 // Read returns the State for slug under repoRoot. Missing or corrupt files

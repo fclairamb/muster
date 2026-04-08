@@ -1,4 +1,4 @@
-# ssf — superset, fixed
+# muster
 
 Orchestrate a set of [Claude Code](https://docs.claude.com/en/docs/claude-code)
 instances across directories and worktrees. A lightweight alternative to
@@ -8,7 +8,7 @@ sitting between the two — featureful without eating all your power.
 ## What it does
 
 - **One binary, one tmux socket**: every claude session runs in a dedicated
-  tmux session on the `-L ssf` socket. Nothing touches your default tmux.
+  tmux session on the `-L muster` socket. Nothing touches your default tmux.
 - **Live status indicators** (🔴 waiting for input, 🟢 ready, 🟡 working,
   ⚪ idle) driven by Claude Code hooks. Installed automatically when you
   register a directory.
@@ -18,28 +18,48 @@ sitting between the two — featureful without eating all your power.
   live next to claude, refreshed via fsnotify.
 - **Subdirs and worktrees as first-class entries** — register a subdir
   and it stays as-is instead of collapsing to the repo root.
-- **Terminal-title updates** so `ssf: list` or `s/datalake [main] ⚪`
+- **Terminal-title updates** so `muster: list` or `s/datalake [main] ⚪`
   shows in your window title.
 
 ## Install
 
 ```sh
-git clone https://github.com/fclairamb/supersetfixed.git
-cd supersetfixed
-make install        # installs ~/.local/bin/ssf
+git clone https://github.com/fclairamb/muster.git
+cd muster
+make install        # installs ~/.local/bin/muster + a `mst` symlink
 ```
+
+`mst` is a three-letter alias for the same binary — `mst list`, `mst <dir>`,
+and so on all work identically to `muster …`.
 
 Or via `go install`:
 
 ```sh
-go install github.com/fclairamb/ssf/cmd/ssf@latest
+go install github.com/fclairamb/muster/cmd/muster@latest
 ```
+
+### Migrating from ssf
+
+If you used the previous incarnation of this project (`ssf` /
+`supersetfixed`), the first time you launch `muster` it auto-detects an
+existing `~/.config/ssf/config.toml` and runs the migration silently.
+You can also run it explicitly:
+
+```sh
+muster migrate
+```
+
+It copies the registry to `~/.config/muster/config.toml`, renames each
+repo's `.ssf/state/` to `.muster/state/`, and rewrites every repo's
+`.claude/settings.json` to use `muster hook write` instead of
+`ssf hook write`. The old config is left in place as a recovery
+breadcrumb. Idempotent — re-running is a no-op.
 
 Requirements:
 
 - Go 1.22+ (for building)
 - tmux 3.2+ (for the session manager)
-- Claude Code (`claude` on PATH, or set `$SSF_CLAUDE_BINARY`)
+- Claude Code (`claude` on PATH, or set `$MUSTER_CLAUDE_BINARY`)
 - macOS for the native notification sounds (linux falls back to silent)
 - **Recommended**: `brew install terminal-notifier` for notification
   grouping and click-to-activate
@@ -47,13 +67,13 @@ Requirements:
 ## Quickstart
 
 ```sh
-ssf ~/code/stonal/datalake      # register + immediately attach to claude
-ssf                             # open the TUI list (does NOT re-register cwd)
-ssf list                        # print the registered entries
-ssf list --json                 # machine-readable
-ssf rm /abs/path/to/dir         # unregister by path
-ssf rm <12-char-slug>           # or by slug (from `ssf list --json`)
-ssf completion zsh              # emit a completion script
+muster ~/code/stonal/datalake      # register + immediately attach to claude
+muster                             # open the TUI list (does NOT re-register cwd)
+muster list                        # print the registered entries
+muster list --json                 # machine-readable
+muster rm /abs/path/to/dir         # unregister by path
+muster rm <12-char-slug>           # or by slug (from `muster list --json`)
+muster completion zsh              # emit a completion script
 ```
 
 In the TUI:
@@ -84,11 +104,11 @@ s/datalake apps/api [feat/x]                 stonal-tech/datalake, subdir
 
 `upstream` remote takes precedence over `origin` so forks display under the
 canonical project. Non-GitHub directories render as the basename. Overrides
-can be set per-org in `~/.config/ssf/config.toml`.
+can be set per-org in `~/.config/muster/config.toml`.
 
 ## Config
 
-Lives at `$XDG_CONFIG_HOME/ssf/config.toml` (default `~/.config/ssf/config.toml`).
+Lives at `$XDG_CONFIG_HOME/muster/config.toml` (default `~/.config/muster/config.toml`).
 
 ```toml
 [[dirs]]
@@ -112,9 +132,9 @@ Lives at `$XDG_CONFIG_HOME/ssf/config.toml` (default `~/.config/ssf/config.toml`
   a set of Claude Code hooks into `.claude/settings.json` at the repo root.
   The hooks are keyed by a sha256-based slug of the registered path so
   subdirs of the same repo get distinct sessions.
-- **Session lifecycle** is driven by `tmux new-session -L ssf -s ssf-<slug>`.
-  Each session runs `claude` (or `$SSF_CLAUDE_BINARY`) with the configured
-  args. Optionally a right pane runs `ssf files <dir>` for the live file list.
+- **Session lifecycle** is driven by `tmux new-session -L muster -s muster-<slug>`.
+  Each session runs `claude` (or `$MUSTER_CLAUDE_BINARY`) with the configured
+  args. Optionally a right pane runs `muster files <dir>` for the live file list.
 - **Status detection** happens via Claude Code hooks:
   - `SessionStart` → idle (⚪)
   - `UserPromptSubmit` → working (🟡)
@@ -122,8 +142,8 @@ Lives at `$XDG_CONFIG_HOME/ssf/config.toml` (default `~/.config/ssf/config.toml`
   - `Notification` → waiting_input (🔴)
   - `PreToolUse[matcher=AskUserQuestion]` → waiting_input (🔴)
   - `PostToolUse[matcher=AskUserQuestion]` → working (🟡)
-  Each hook invokes `ssf hook write <slug> <kind>` which atomically writes
-  the state to `<repo-root>/.ssf/state/<slug>.json`.
+  Each hook invokes `muster hook write <slug> <kind>` which atomically writes
+  the state to `<repo-root>/.muster/state/<slug>.json`.
 - **Staleness decay**: if a `working` or `waiting_input` state is older
   than 30 seconds and no update arrived, it decays to `idle`. This handles
   the case where claude went quiet without firing a `Stop` hook.
@@ -134,12 +154,12 @@ Lives at `$XDG_CONFIG_HOME/ssf/config.toml` (default `~/.config/ssf/config.toml`
 ## Keyboard at a glance
 
 ```
-ssf              # open the TUI (does not register)
-ssf ~/code/foo   # register + immediately attach to claude
-ssf list         # print entries, no TUI
-ssf rm <path>    # unregister
-ssf version      # version info
-ssf --help       # full help
+muster              # open the TUI (does not register)
+muster ~/code/foo   # register + immediately attach to claude
+muster list         # print entries, no TUI
+muster rm <path>    # unregister
+muster version      # version info
+muster --help       # full help
 ```
 
 ## Status

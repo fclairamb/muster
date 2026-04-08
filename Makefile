@@ -5,12 +5,13 @@ PREFIX ?= $(HOME)/.local
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 build:
-	go build -ldflags="-X main.version=$(VERSION)" -o bin/ssf ./cmd/ssf
+	go build -ldflags="-X main.version=$(VERSION)" -o bin/muster ./cmd/muster
 
 install: build
 	install -d $(PREFIX)/bin
-	install -m 0755 bin/ssf $(PREFIX)/bin/ssf
-	@echo "installed $(PREFIX)/bin/ssf"
+	install -m 0755 bin/muster $(PREFIX)/bin/muster
+	ln -sf muster $(PREFIX)/bin/mst
+	@echo "installed $(PREFIX)/bin/muster (with mst symlink)"
 
 test:
 	go test ./...

@@ -12,17 +12,17 @@ type Manager interface {
 	List() ([]string, error)
 }
 
-// SocketName is the dedicated tmux socket name ssf uses to avoid polluting
+// SocketName is the dedicated tmux socket name muster uses to avoid polluting
 // the user's default tmux server.
-const SocketName = "ssf"
+const SocketName = "muster"
 
 // SessionPrefix is prepended to every slug to form the tmux session name.
-const SessionPrefix = "ssf-"
+const SessionPrefix = "muster-"
 
 // claudeBinary returns the path/name of the claude binary, honoring
-// $SSF_CLAUDE_BINARY for tests.
+// $MUSTER_CLAUDE_BINARY for tests.
 func claudeBinary() string {
-	if v := os.Getenv("SSF_CLAUDE_BINARY"); v != "" {
+	if v := os.Getenv("MUSTER_CLAUDE_BINARY"); v != "" {
 		return v
 	}
 	return "claude"

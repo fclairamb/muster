@@ -1,4 +1,4 @@
-// Command ssf orchestrates a set of Claude Code instances across worktrees.
+// Command muster orchestrates a set of Claude Code instances across worktrees.
 package main
 
 import (
@@ -16,18 +16,18 @@ import (
 	"github.com/urfave/cli/v3"
 	xterm "golang.org/x/term"
 
-	"github.com/fclairamb/ssf/internal/config"
-	"github.com/fclairamb/ssf/internal/hooks"
-	"github.com/fclairamb/ssf/internal/notify"
-	"github.com/fclairamb/ssf/internal/orgprefix"
-	"github.com/fclairamb/ssf/internal/registry"
-	"github.com/fclairamb/ssf/internal/render"
-	"github.com/fclairamb/ssf/internal/repoinfo"
-	"github.com/fclairamb/ssf/internal/session"
-	"github.com/fclairamb/ssf/internal/slug"
-	"github.com/fclairamb/ssf/internal/state"
-	"github.com/fclairamb/ssf/internal/state/watcher"
-	"github.com/fclairamb/ssf/internal/tui"
+	"github.com/fclairamb/muster/internal/config"
+	"github.com/fclairamb/muster/internal/hooks"
+	"github.com/fclairamb/muster/internal/notify"
+	"github.com/fclairamb/muster/internal/orgprefix"
+	"github.com/fclairamb/muster/internal/registry"
+	"github.com/fclairamb/muster/internal/render"
+	"github.com/fclairamb/muster/internal/repoinfo"
+	"github.com/fclairamb/muster/internal/session"
+	"github.com/fclairamb/muster/internal/slug"
+	"github.com/fclairamb/muster/internal/state"
+	"github.com/fclairamb/muster/internal/state/watcher"
+	"github.com/fclairamb/muster/internal/tui"
 )
 
 // version is overridden at build time via -ldflags="-X main.version=...".
@@ -65,15 +65,16 @@ func init() {
 }
 
 func main() {
+	autoMigrateIfNeeded()
 	if err := newApp().Run(context.Background(), os.Args); err != nil {
-		fmt.Fprintln(os.Stderr, "ssf:", err)
+		fmt.Fprintln(os.Stderr, "muster:", err)
 		os.Exit(1)
 	}
 }
 
 func newApp() *cli.Command {
 	return &cli.Command{
-		Name:                  "ssf",
+		Name:                  "muster",
 		Usage:                 "orchestrate Claude Code instances across worktrees",
 		ArgsUsage:             "[dir]",
 		Version:               version,
@@ -87,6 +88,7 @@ func newApp() *cli.Command {
 			listCommand(),
 			rmCommand(),
 			versionCommand(),
+			migrateCommand(),
 			hookCommand(),
 			filesCommand(),
 		},
@@ -98,7 +100,7 @@ func versionCommand() *cli.Command {
 		Name:  "version",
 		Usage: "print the version",
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			fmt.Fprintln(os.Stdout, "ssf version", version)
+			fmt.Fprintln(os.Stdout, "muster version", version)
 			return nil
 		},
 	}
@@ -106,10 +108,10 @@ func versionCommand() *cli.Command {
 
 // rootAction is the default Action.
 //
-//   - `ssf`            → open the TUI, do not touch the registry.
-//   - `ssf <dir>`      → validate, register/touch <dir>, then open the TUI.
+//   - `muster`            → open the TUI, do not touch the registry.
+//   - `muster <dir>`      → validate, register/touch <dir>, then open the TUI.
 //
-// Bare `ssf` deliberately does NOT register cwd — otherwise every launch
+// Bare `muster` deliberately does NOT register cwd — otherwise every launch
 // from a working directory re-adds it, and entries the user removed via
 // `r` reappear on the next run.
 func rootAction(ctx context.Context, cmd *cli.Command) error {
@@ -174,10 +176,14 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 
 // hookCommand returns the hidden hook subcommand tree.
 //
-// IMPORTANT: the literal command string "ssf hook write <slug> <kind>" is
-// hard-coded into every .claude/settings.json file ssf installs (see
+// IMPORTANT: the literal command string "muster hook write <slug> <kind>" is
+// hard-coded into every .claude/settings.json file muster installs (see
 // internal/hooks/hooks.go). Renaming this subcommand or its arguments will
 // break every existing installation. Lock the name.
+//
+// HISTORY: this was previously "ssf hook write …". Slice 15 renamed the
+// project from ssf to muster; the rename is the one and only exception.
+// `muster migrate` rewrites legacy entries via UninstallLegacy + Install.
 func hookCommand() *cli.Command {
 	return &cli.Command{
 		Name:   "hook",
@@ -196,7 +202,7 @@ func hookCommand() *cli.Command {
 func runHookWrite(ctx context.Context, cmd *cli.Command) error {
 	args := cmd.Args()
 	if args.Len() < 2 {
-		return fmt.Errorf("usage: ssf hook write <slug> <state>")
+		return fmt.Errorf("usage: muster hook write <slug> <state>")
 	}
 	hookSlug := args.Get(0)
 	kind := state.Kind(args.Get(1))
@@ -212,7 +218,7 @@ func runHookWrite(ctx context.Context, cmd *cli.Command) error {
 	st := state.State{
 		Kind:    kind,
 		Ts:      time.Now().UTC(),
-		Session: "ssf-" + hookSlug,
+		Session: session.SessionPrefix + hookSlug,
 	}
 	return state.Write(info.RepoRoot, hookSlug, st)
 }

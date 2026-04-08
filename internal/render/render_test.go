@@ -3,8 +3,8 @@ package render
 import (
 	"testing"
 
-	"github.com/fclairamb/ssf/internal/config"
-	"github.com/fclairamb/ssf/internal/repoinfo"
+	"github.com/fclairamb/muster/internal/config"
+	"github.com/fclairamb/muster/internal/repoinfo"
 )
 
 func TestLineGitHub(t *testing.T) {

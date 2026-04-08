@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/fclairamb/ssf/internal/state"
+	"github.com/fclairamb/muster/internal/state"
 )
 
 // Entry is a single row in the TUI list. It can be a registered repo, a
@@ -18,7 +18,7 @@ type Entry struct {
 	// the tmux session cwd, file-manager target, and registry key.
 	Path string
 	// RepoRoot is the git repo root that contains Path (or Path itself
-	// for non-git dirs). State files live under RepoRoot/.ssf/state and
+	// for non-git dirs). State files live under RepoRoot/.muster/state and
 	// hooks are installed at RepoRoot/.claude/settings.json.
 	RepoRoot   string
 	Slug       string
