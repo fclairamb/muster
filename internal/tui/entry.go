@@ -9,8 +9,9 @@ import (
 )
 
 // Entry is a single row in the TUI list. It can be a registered repo, a
-// subdir of a repo, or a worktree under a repo. Indent controls vertical
-// nesting in the rendered list.
+// subdir of a repo, a worktree under a repo, or a parallel claude instance
+// for a registered dir. Indent controls vertical nesting in the rendered
+// list.
 type Entry struct {
 	Display string
 	Indent  int
@@ -21,10 +22,16 @@ type Entry struct {
 	// RepoRoot is the git repo root that contains Path (or Path itself
 	// for non-git dirs). State files live under RepoRoot/.muster/state and
 	// hooks are installed at RepoRoot/.claude/settings.json.
-	RepoRoot   string
-	Slug       string
+	RepoRoot string
+	Slug     string
+	// Instance, when non-empty, marks this entry as a parallel claude
+	// session sharing Path with another entry. The slug already encodes
+	// the instance suffix; Instance is kept here for the registry roundtrip
+	// (Unregister, default-name computation) and for display rendering.
+	Instance   string
 	LastOpen   time.Time
 	IsWorktree bool // worktrees get the git-worktree-remove flow; registered repos get unregistered
+	IsInstance bool // parallel claude instance under a parent dir
 	Stats      gitstats.Stats
 }
 

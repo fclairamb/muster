@@ -37,9 +37,19 @@ type Deps struct {
 	AttachCmdFunc func(slug string) *exec.Cmd
 
 	// Unregister persists removal of a registered (non-worktree) entry —
-	// drops it from the registry and uninstalls its Claude Code hooks.
-	// Without this, removed entries reappear on the next launch.
-	Unregister func(path string) error
+	// drops the (path, instance) pair from the registry and, when no
+	// other entries remain in the same repo, uninstalls the Claude Code
+	// hooks. Without this, removed entries reappear on the next launch.
+	// instance == "" addresses the primary entry; non-empty addresses a
+	// parallel claude instance.
+	Unregister func(path, instance string) error
+
+	// AddInstance persists a new parallel claude instance for the given
+	// parent path with the given instance label, starts its tmux session,
+	// and returns the derived slug for the new entry. The TUI uses the
+	// returned slug to insert a nested row immediately so the user sees
+	// the new instance without restarting muster.
+	AddInstance func(parentPath, instance string) (slug string, err error)
 
 	// ReadState reads the current state for one entry from disk. Used by
 	// the periodic refresh to keep the rendered status in sync even when
@@ -113,6 +123,33 @@ func BuildWorktreeRemoveArgs(worktreePath string, force bool) []string {
 	}
 	args = append(args, worktreePath)
 	return args
+}
+
+// ErrInvalidInstanceName is returned when a user-supplied instance label fails validation.
+var ErrInvalidInstanceName = errors.New("invalid instance name")
+
+// ValidateInstance accepts non-empty strings of [a-z0-9-]. The instance
+// label becomes part of a tmux session name and an on-disk file name, so
+// it must be filesystem- and shell-safe. The default labels muster
+// pre-fills are integers (2, 3, …), which trivially pass.
+func ValidateInstance(name string) error {
+	if name == "" {
+		return ErrInvalidInstanceName
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= '0' && c <= '9':
+		case c == '-':
+		default:
+			return ErrInvalidInstanceName
+		}
+	}
+	if name[0] == '-' || name[len(name)-1] == '-' {
+		return ErrInvalidInstanceName
+	}
+	return nil
 }
 
 // ErrInvalidBranchName is returned when a user-supplied branch name fails validation.

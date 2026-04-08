@@ -68,15 +68,30 @@ Every registered path has two representations:
 Violating this rule silently orphans running sessions and state files on
 the first collision-driven rename. Enforced by the slice 02 spec.
 
-### `muster hook write <slug> <kind>` is a public contract
+### `muster hook write <kind>` is a public contract
 
 Every `.claude/settings.local.json` muster installs hard-codes this literal
-command string (older installs landed in `.claude/settings.json`; the
-installer scrubs them automatically on the next muster run). Renaming the subcommand or reordering arguments breaks every
-existing installation. There's a warning comment in
-`internal/hooks/hooks.go` next to `command()` and in
-`cmd/muster/main.go`'s `hookCommand()`. Don't rename, don't reorder. If you
-add new hook events, append — don't reshuffle existing ones.
+command string. The slug for state-file routing is read from the
+`MUSTER_SLUG` environment variable, which `Tmux.Start` injects via
+`new-session -e MUSTER_SLUG=<slug>`. This decoupling is what lets multiple
+parallel claude instances in the same repo (the `n` key) share one
+`settings.local.json` while writing to distinct state files.
+
+Renaming the `hook write` subcommand or removing the env-var contract
+breaks every existing installation. There are warning comments in
+`internal/hooks/hooks.go` next to `command()` and in `cmd/muster/main.go`'s
+`hookCommand()`. Don't rename. If you add new hook events, append — don't
+reshuffle existing ones.
+
+**Legacy command shapes** still recognized by `runHookWrite` for backward
+compatibility, deprecated and rewritten by `hooks.Install` on next launch:
+
+- `ssf hook write <slug> <kind>` — original ssf-era form (slice 15
+  rename). Scrubbed by `UninstallLegacy`.
+- `muster hook write <slug> <kind>` — slug-in-argv form, used until the
+  parallel-instances feature. `runHookWrite` still accepts the 2-arg
+  shape; `hooks.Install` strips any matching entries from
+  `settings.local.json` before reinstalling the new env-var form.
 
 ### Side-effect injection via Deps
 
@@ -140,7 +155,7 @@ the right pane when `SidePanel` is true AND terminal width ≥ 100 columns.
 Both settings are in `internal/session/tmux.go`; terminal width is
 captured in `cmd/muster/main.go` before tmux suspends muster.
 
-The right pane is locked to `session.SidePanelWidth` (20 cols) via tmux
+The right pane is locked to `session.SidePanelWidth` (30 cols) via tmux
 session hooks installed by `installSidePanelHooks`:
 
 - `window-resized` → `resize-pane -x 20`
@@ -183,7 +198,7 @@ once per refresh tick per entry and would just spam the indicator.
 
 ### Worktrees added in-TUI nest under their parent
 
-Pressing `n` and naming a branch runs `git worktree add` and then —
+Pressing `w` and naming a branch runs `git worktree add` and then —
 on success — inserts a fresh `Entry{Indent: 1, IsWorktree: true,
 Display: "[<branch>]"}` directly after the parent in `m.entries` via
 `insertAfterSlug`. `SortEntries` keeps `Indent==0` parents grouped with
@@ -191,6 +206,29 @@ their `Indent>0` children, so the new worktree appears nested without
 restarting muster. The worktree path is the single source of truth in
 `WorktreePathFor(repo, branch)`, used by both the git arg builder and
 the post-create entry insertion.
+
+### Parallel claude instances per directory (`n`)
+
+Pressing `n` opens a name prompt pre-filled with the next available
+integer label (`2`, `3`, …) and creates a parallel claude tmux session
+sharing the parent's working directory. The new entry is persisted in
+`config.toml` as a `Dir` with the same `Path` as its primary plus a
+non-empty `Instance` field; the slug is derived as
+`slug.For(path, instance) == slug(path)+"-"+instance`. The instance row
+appears nested under the parent (`Indent: 1`, `IsInstance: true`,
+`Display: "#<name>"`).
+
+Each instance has its own slug → its own state file
+(`.muster/state/<slug>.json`) → its own status indicator. The single
+hook entry in `.claude/settings.local.json` reads `$MUSTER_SLUG` to
+decide which state file to write — that env var is injected per-session
+by `Tmux.Start` via `new-session -e MUSTER_SLUG=<slug>`.
+
+`r` on an instance row kills its tmux session before unregistering,
+since instances exist purely as muster constructs with no meaning
+outside the registry. Removing the primary leaves any instance children
+in place — they continue to function as standalone entries until
+removed individually.
 
 ## Testing philosophy
 

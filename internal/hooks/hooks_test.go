@@ -23,7 +23,7 @@ func readSettings(t *testing.T, repo string) map[string]any {
 
 func TestInstallFresh(t *testing.T) {
 	repo := t.TempDir()
-	if err := Install(repo, "abc"); err != nil {
+	if err := Install(repo); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	m := readSettings(t, repo)
@@ -34,6 +34,14 @@ func TestInstallFresh(t *testing.T) {
 			t.Fatalf("event %s: expected 1 entry, got %d", ev, len(entries))
 		}
 	}
+	// Commands must be the env-var (slugless) form.
+	stop := hooks["Stop"].([]any)
+	em := stop[0].(map[string]any)
+	inner := em["hooks"].([]any)
+	hm := inner[0].(map[string]any)
+	if got := hm["command"].(string); got != "muster hook write ready" {
+		t.Fatalf("command = %q, want env-var form", got)
+	}
 }
 
 func TestInstallPreservesUnrelatedKeys(t *testing.T) {
@@ -43,7 +51,7 @@ func TestInstallPreservesUnrelatedKeys(t *testing.T) {
 	if err := os.WriteFile(SettingsLocalPath(repo), []byte(pre), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Install(repo, "abc"); err != nil {
+	if err := Install(repo); err != nil {
 		t.Fatal(err)
 	}
 	m := readSettings(t, repo)
@@ -54,11 +62,11 @@ func TestInstallPreservesUnrelatedKeys(t *testing.T) {
 
 func TestInstallIdempotent(t *testing.T) {
 	repo := t.TempDir()
-	if err := Install(repo, "abc"); err != nil {
+	if err := Install(repo); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := os.ReadFile(SettingsLocalPath(repo))
-	if err := Install(repo, "abc"); err != nil {
+	if err := Install(repo); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := os.ReadFile(SettingsLocalPath(repo))
@@ -67,21 +75,41 @@ func TestInstallIdempotent(t *testing.T) {
 	}
 }
 
-func TestInstallSecondSlugCoexists(t *testing.T) {
+func TestInstallUpgradesLegacySlugForm(t *testing.T) {
+	// A settings.local.json from an older muster contains the slug-in-argv
+	// form. After Install runs, those entries must be replaced with the
+	// new env-var form — leaving exactly one entry per event.
 	repo := t.TempDir()
-	_ = Install(repo, "abc")
-	_ = Install(repo, "xyz")
+	_ = os.MkdirAll(filepath.Dir(SettingsLocalPath(repo)), 0o755)
+	pre := `{"hooks":{
+		"Stop":[
+			{"hooks":[{"type":"command","command":"muster hook write abc ready"}]},
+			{"hooks":[{"type":"command","command":"muster hook write xyz ready"}]}
+		]
+	}}`
+	if err := os.WriteFile(SettingsLocalPath(repo), []byte(pre), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Install(repo); err != nil {
+		t.Fatal(err)
+	}
 	m := readSettings(t, repo)
 	hooks := m["hooks"].(map[string]any)
-	entries := hooks["Stop"].([]any)
-	if len(entries) != 2 {
-		t.Fatalf("expected 2 Stop entries, got %d", len(entries))
+	stop := hooks["Stop"].([]any)
+	if len(stop) != 1 {
+		t.Fatalf("expected exactly 1 Stop entry post-upgrade, got %d", len(stop))
+	}
+	em := stop[0].(map[string]any)
+	inner := em["hooks"].([]any)
+	hm := inner[0].(map[string]any)
+	if got := hm["command"].(string); got != "muster hook write ready" {
+		t.Fatalf("post-upgrade command = %q, want env-var form", got)
 	}
 }
 
 func TestInstallWritesAskUserQuestionMatcher(t *testing.T) {
 	repo := t.TempDir()
-	if err := Install(repo, "abc"); err != nil {
+	if err := Install(repo); err != nil {
 		t.Fatal(err)
 	}
 	m := readSettings(t, repo)
@@ -100,7 +128,7 @@ func TestInstallWritesAskUserQuestionMatcher(t *testing.T) {
 
 func TestUninstallLegacy(t *testing.T) {
 	repo := t.TempDir()
-	if err := Install(repo, "abc"); err != nil {
+	if err := Install(repo); err != nil {
 		t.Fatal(err)
 	}
 	// Inject a legacy `ssf hook write` entry by hand.
@@ -130,13 +158,11 @@ func TestUninstallLegacy(t *testing.T) {
 	}
 }
 
-func TestInstallScrubsSharedSettingsForSlug(t *testing.T) {
-	// Stage a pre-existing committed settings.json containing both an old
-	// muster entry for our slug AND an unrelated permissions key. After
-	// Install runs, the slug entries must be gone from settings.json (so
-	// nothing muster-related lingers in the team-shared file), the
-	// unrelated key must survive, and the new entries land in
-	// settings.local.json.
+func TestInstallScrubsMusterFromSharedSettings(t *testing.T) {
+	// Shared settings.json contains a stale muster entry plus an unrelated
+	// permissions key. After Install: the muster entry is gone from
+	// settings.json, the unrelated key survives, and the canonical install
+	// lives in settings.local.json.
 	repo := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(repo, ".claude"), 0o755)
 	pre := `{
@@ -150,11 +176,9 @@ func TestInstallScrubsSharedSettingsForSlug(t *testing.T) {
 	if err := os.WriteFile(SettingsSharedPath(repo), []byte(pre), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Install(repo, "abc"); err != nil {
+	if err := Install(repo); err != nil {
 		t.Fatal(err)
 	}
-	// settings.json must still exist (permissions key) and must no longer
-	// contain any muster hook references.
 	sharedBytes, err := os.ReadFile(SettingsSharedPath(repo))
 	if err != nil {
 		t.Fatalf("shared settings should still exist: %v", err)
@@ -165,24 +189,20 @@ func TestInstallScrubsSharedSettingsForSlug(t *testing.T) {
 	if !strings.Contains(string(sharedBytes), "permissions") {
 		t.Fatalf("permissions key dropped from shared settings:\n%s", sharedBytes)
 	}
-	// settings.local.json holds the canonical install.
 	localBytes, _ := os.ReadFile(SettingsLocalPath(repo))
-	if !strings.Contains(string(localBytes), "muster hook write abc") {
+	if !strings.Contains(string(localBytes), "muster hook write ready") {
 		t.Fatalf("muster entry not installed in local settings:\n%s", localBytes)
 	}
 }
 
 func TestInstallRemovesEmptyStubSharedSettings(t *testing.T) {
-	// When the shared settings.json contained ONLY a muster entry, after
-	// scrubbing the file should be removed entirely so the project tree
-	// doesn't carry an empty stub forever.
 	repo := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(repo, ".claude"), 0o755)
 	pre := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"muster hook write abc ready"}]}]}}`
 	if err := os.WriteFile(SettingsSharedPath(repo), []byte(pre), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Install(repo, "abc"); err != nil {
+	if err := Install(repo); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(SettingsSharedPath(repo)); !os.IsNotExist(err) {
@@ -202,7 +222,6 @@ func TestEnsureGitignored(t *testing.T) {
 	if !strings.Contains(string(b), ".claude/settings.local.json") {
 		t.Fatalf("gitignore missing entry:\n%s", b)
 	}
-	// Idempotent: a second call must not append a duplicate.
 	if err := EnsureGitignored(repo); err != nil {
 		t.Fatal(err)
 	}
@@ -213,8 +232,6 @@ func TestEnsureGitignored(t *testing.T) {
 }
 
 func TestEnsureGitignoredHonorsBroaderPatterns(t *testing.T) {
-	// If the user already ignores `.claude/` wholesale, EnsureGitignored
-	// must not append a redundant settings.local.json line.
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".claude/\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -228,18 +245,16 @@ func TestEnsureGitignoredHonorsBroaderPatterns(t *testing.T) {
 	}
 }
 
-func TestUninstall(t *testing.T) {
+func TestUninstallRepoScoped(t *testing.T) {
 	repo := t.TempDir()
-	_ = Install(repo, "abc")
-	_ = Install(repo, "xyz")
-	if err := Uninstall(repo, "abc"); err != nil {
+	if err := Install(repo); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := os.ReadFile(SettingsLocalPath(repo))
-	if strings.Contains(string(b), "abc") {
-		t.Fatal("abc still present after uninstall")
+	if err := Uninstall(repo); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), "xyz") {
-		t.Fatal("xyz removed when only abc should be")
+	if _, err := os.Stat(SettingsLocalPath(repo)); !os.IsNotExist(err) {
+		b, _ := os.ReadFile(SettingsLocalPath(repo))
+		t.Fatalf("expected settings file removed, got contents:\n%s", b)
 	}
 }

@@ -107,6 +107,7 @@ const (
 	modalBranchPrompt
 	modalConfirmRemove
 	modalBranchPicker
+	modalInstancePrompt
 )
 
 // Model holds the TUI state.
@@ -132,6 +133,13 @@ type Model struct {
 	branchFilter  string   // typed filter
 	branchCursor  int      // index into the filtered view
 	branchLoading bool     // true until branchListMsg arrives
+
+	// Instance prompt state. Active when modal == modalInstancePrompt.
+	// instanceParentPath/Slug record which row the modal was opened on
+	// (resolved up to the primary if the user invoked it from an instance
+	// child) so the submit handler can wire the new entry to its parent.
+	instanceParentSlug string
+	instanceParentPath string
 
 	quitting bool
 
@@ -474,6 +482,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleConfirmRemoveKey(msg)
 	case modalBranchPicker:
 		return m.handleBranchPickerKey(msg)
+	case modalInstancePrompt:
+		return m.handleInstancePromptKey(msg)
 	}
 	if m.searching {
 		return m.handleSearchKey(msg)
@@ -500,10 +510,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.actionOpen()
 	case "e":
 		return m.actionEdit()
-	case "n":
+	case "w":
 		m.modal = modalBranchPrompt
 		m.modalInput = ""
 		m.modalErr = ""
+	case "n":
+		return m.actionNewInstance()
 	case "b":
 		return m.actionBranchPicker()
 	case "r":
@@ -583,6 +595,138 @@ func (m Model) handleBranchPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.modal = modalNone
 		m.modalInput = ""
 		return m, cmd
+	case tea.KeyBackspace:
+		if len(m.modalInput) > 0 {
+			m.modalInput = m.modalInput[:len(m.modalInput)-1]
+		}
+	case tea.KeyRunes, tea.KeySpace:
+		m.modalInput += string(msg.Runes)
+	}
+	return m, nil
+}
+
+// actionNewInstance opens the instance-name prompt for the parent of the
+// currently selected row. If the user is sitting on an instance child, the
+// modal targets that child's parent — pressing `n` on "[#2]" creates "#3"
+// of the same primary, not a nested instance-of-instance. The prompt is
+// pre-filled with the next available integer label so the user can hit
+// enter to accept the default.
+func (m Model) actionNewInstance() (tea.Model, tea.Cmd) {
+	entry := m.selectedEntry()
+	if entry == nil {
+		return m, nil
+	}
+	parent := m.findInstanceParent(*entry)
+	if parent == nil {
+		return m, nil
+	}
+	m.modal = modalInstancePrompt
+	m.modalErr = ""
+	m.instanceParentSlug = parent.Slug
+	m.instanceParentPath = parent.Path
+	m.modalInput = m.nextInstanceLabel(parent.Slug)
+	return m, nil
+}
+
+// findInstanceParent returns the primary (Indent==0, !IsInstance) entry
+// associated with e — either e itself if it's a primary, or the nearest
+// preceding primary in m.entries if e is a child row. Worktrees are
+// returned as-is: they're their own primary because they have a distinct
+// path and slug from the parent repo.
+func (m Model) findInstanceParent(e Entry) *Entry {
+	if e.Indent == 0 && !e.IsInstance {
+		return &e
+	}
+	if e.IsWorktree {
+		// Worktrees are independent primaries; instances of a worktree
+		// are addressed against the worktree itself.
+		copyE := e
+		copyE.Indent = 0
+		return &copyE
+	}
+	// Walk back to the nearest primary in the canonical entries slice.
+	for i := len(m.entries) - 1; i >= 0; i-- {
+		if m.entries[i].Slug != e.Slug && m.entries[i].Path == e.Path && !m.entries[i].IsInstance && m.entries[i].Indent == 0 {
+			cp := m.entries[i]
+			return &cp
+		}
+	}
+	return nil
+}
+
+// nextInstanceLabel returns the smallest integer ≥ 2 that is not already
+// taken as an instance label by any existing child of parentSlug. The
+// primary itself is conceptually instance "1", so the first new instance
+// is "2".
+func (m Model) nextInstanceLabel(parentSlug string) string {
+	taken := map[string]bool{}
+	for _, e := range m.entries {
+		if e.IsInstance && strings.HasPrefix(e.Slug, parentSlug+"-") {
+			taken[e.Instance] = true
+		}
+	}
+	for n := 2; ; n++ {
+		s := fmt.Sprintf("%d", n)
+		if !taken[s] {
+			return s
+		}
+	}
+}
+
+func (m Model) handleInstancePromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.modal = modalNone
+		m.modalInput = ""
+		m.modalErr = ""
+		m.instanceParentSlug = ""
+		m.instanceParentPath = ""
+		return m, nil
+	case tea.KeyEnter:
+		name := strings.TrimSpace(m.modalInput)
+		if err := ValidateInstance(name); err != nil {
+			m.modalErr = "name must be [a-z0-9-]"
+			return m, nil
+		}
+		if m.deps.AddInstance == nil || m.instanceParentPath == "" {
+			m.modal = modalNone
+			return m, nil
+		}
+		newSlug, err := m.deps.AddInstance(m.instanceParentPath, name)
+		if err != nil {
+			m.modalErr = err.Error()
+			return m, nil
+		}
+		// Find the parent in m.entries to copy RepoRoot.
+		var repoRoot string
+		for _, e := range m.entries {
+			if e.Slug == m.instanceParentSlug {
+				repoRoot = e.RepoRoot
+				break
+			}
+		}
+		if repoRoot == "" {
+			repoRoot = m.instanceParentPath
+		}
+		newEntry := Entry{
+			Display:    "#" + name,
+			Indent:     1,
+			Path:       m.instanceParentPath,
+			RepoRoot:   repoRoot,
+			Slug:       newSlug,
+			Instance:   name,
+			Kind:       state.KindIdle,
+			LastOpen:   time.Now(),
+			IsInstance: true,
+		}
+		m.entries = insertAfterSlug(m.entries, m.instanceParentSlug, newEntry)
+		m.modal = modalNone
+		m.modalInput = ""
+		m.modalErr = ""
+		m.instanceParentSlug = ""
+		m.instanceParentPath = ""
+		m = m.applyRefresh()
+		return m, m.statsCmd()
 	case tea.KeyBackspace:
 		if len(m.modalInput) > 0 {
 			m.modalInput = m.modalInput[:len(m.modalInput)-1]
@@ -731,9 +875,15 @@ func (m Model) handleConfirmRemoveKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			id := (&m).beginOp("git worktree remove " + entry.Path)
 			return m, wrapOp(id, m.removeWorktreeCmd(entry.Slug, entry.Path, m.modalForce))
 		}
+		// Instance children: kill the tmux session before removing the
+		// entry, since instances exist purely as muster constructs and
+		// have no meaning outside the registry.
+		if entry.IsInstance && m.deps.Session != nil {
+			_ = m.deps.Session.Kill(entry.Slug)
+		}
 		// Registered dir: unregister is not git work, run inline.
 		if m.deps.Unregister != nil {
-			if err := m.deps.Unregister(entry.Path); err != nil {
+			if err := m.deps.Unregister(entry.Path, entry.Instance); err != nil {
 				m.modalErr = err.Error()
 				return m, nil
 			}
@@ -1054,6 +1204,13 @@ func (m Model) View() string {
 			b.WriteString("\n  ⚠ ")
 			b.WriteString(m.modalErr)
 		}
+	case m.modal == modalInstancePrompt:
+		b.WriteString("\nNew claude instance name: ")
+		b.WriteString(m.modalInput)
+		if m.modalErr != "" {
+			b.WriteString("\n  ⚠ ")
+			b.WriteString(m.modalErr)
+		}
 	case m.modal == modalBranchPicker:
 		b.WriteString("\nCheckout branch: ")
 		b.WriteString(m.branchFilter)
@@ -1111,7 +1268,7 @@ func (m Model) View() string {
 		b.WriteString("\n/")
 		b.WriteString(m.search)
 	default:
-		b.WriteString("\n↑↓ move  / search  enter open  s shell  o files  e edit  n new  b branch  u pull  m merge-main  p push  x stop  r remove  q quit")
+		b.WriteString("\n↑↓ move  / search  enter open  s shell  o files  e edit  n instance  w worktree  b branch  u pull  m merge-main  p push  x stop  r remove  q quit")
 	}
 	return b.String()
 }

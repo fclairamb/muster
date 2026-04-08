@@ -44,12 +44,20 @@ func claudeBinary() string {
 // buildStartArgs returns the argv for spawning a detached tmux session that
 // runs the given claude binary in cwd, optionally followed by extra args
 // (e.g. --dangerously-skip-permissions) passed straight through to claude.
+//
+// Each session is started with MUSTER_SLUG=<slug> in its environment via
+// `new-session -e`. The hook subcommand muster installs into
+// .claude/settings.local.json reads this env var to know which on-disk
+// state file to write — that's how multiple parallel claude instances in
+// the same repo route their state to distinct files while sharing one
+// settings.local.json.
 func buildStartArgs(slug, cwd, binary string, claudeArgs []string) []string {
 	args := []string{
 		"-L", SocketName,
 		"new-session",
 		"-d",
 		"-s", SessionPrefix + slug,
+		"-e", "MUSTER_SLUG=" + slug,
 		"-c", cwd,
 		binary,
 	}

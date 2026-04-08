@@ -100,7 +100,7 @@ func TestEditSpawnsEditor(t *testing.T) {
 func TestNewWorktreeFlow(t *testing.T) {
 	_, g, _, deps := actionDeps()
 	m := NewModel([]Entry{entryAt("abc", "/repo")}).WithDeps(deps)
-	next, _ := m.Update(key("n"))
+	next, _ := m.Update(key("w"))
 	m = next.(Model)
 	for _, r := range "feat/x" {
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
@@ -142,7 +142,7 @@ func TestNewWorktreeFlow(t *testing.T) {
 func TestNewWorktreeRejectsBadBranch(t *testing.T) {
 	_, g, _, deps := actionDeps()
 	m := NewModel([]Entry{entryAt("abc", "/repo")}).WithDeps(deps)
-	next, _ := m.Update(key("n"))
+	next, _ := m.Update(key("w"))
 	m = next.(Model)
 	for _, r := range "bad name" {
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
@@ -412,10 +412,123 @@ func TestInflightShowsBranchListAndCheckout(t *testing.T) {
 	}
 }
 
+func TestNewInstancePromptDefaultsToTwo(t *testing.T) {
+	sm, _, _, deps := actionDeps()
+	var added [][2]string
+	deps.AddInstance = func(parent, instance string) (string, error) {
+		added = append(added, [2]string{parent, instance})
+		return "abc-" + instance, nil
+	}
+	deps.Session = sm
+	m := NewModel([]Entry{entryAt("abc", "/repo")}).WithDeps(deps)
+	// Open the instance modal — pre-filled with "2".
+	next, _ := m.Update(key("n"))
+	m = next.(Model)
+	if m.modal != modalInstancePrompt {
+		t.Fatalf("modal = %v, want modalInstancePrompt", m.modal)
+	}
+	if m.modalInput != "2" {
+		t.Fatalf("default name = %q, want %q", m.modalInput, "2")
+	}
+	// Accept the default.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if len(added) != 1 || added[0] != [2]string{"/repo", "2"} {
+		t.Fatalf("AddInstance call = %v, want [/repo 2]", added)
+	}
+	if len(m.entries) != 2 {
+		t.Fatalf("expected 2 entries (parent + #2), got %d: %+v", len(m.entries), m.entries)
+	}
+	parent, child := m.entries[0], m.entries[1]
+	if parent.Slug != "abc" || parent.Indent != 0 {
+		t.Fatalf("parent shifted: %+v", parent)
+	}
+	if !child.IsInstance || child.Indent != 1 || child.Slug != "abc-2" || child.Instance != "2" {
+		t.Fatalf("child malformed: %+v", child)
+	}
+	if child.Display != "#2" {
+		t.Fatalf("child display = %q", child.Display)
+	}
+
+	// Pressing n again pre-fills "3" because "2" is now taken.
+	next, _ = m.Update(key("n"))
+	m = next.(Model)
+	if m.modalInput != "3" {
+		t.Fatalf("second default name = %q, want %q", m.modalInput, "3")
+	}
+}
+
+func TestNewInstanceRejectsBadName(t *testing.T) {
+	_, _, _, deps := actionDeps()
+	deps.AddInstance = func(parent, instance string) (string, error) {
+		t.Fatalf("AddInstance must not be called: parent=%s instance=%s", parent, instance)
+		return "", nil
+	}
+	m := NewModel([]Entry{entryAt("abc", "/repo")}).WithDeps(deps)
+	next, _ := m.Update(key("n"))
+	m = next.(Model)
+	// Replace the default with garbage.
+	for range "23" {
+		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+		m = next.(Model)
+	}
+	for _, r := range "BAD NAME" {
+		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(Model)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.modal != modalInstancePrompt {
+		t.Fatal("modal should remain open after invalid input")
+	}
+	if m.modalErr == "" {
+		t.Fatal("modalErr should be populated")
+	}
+}
+
+func TestRemoveInstanceKillsSessionAndUnregisters(t *testing.T) {
+	sm, _, _, deps := actionDeps()
+	_ = sm.Start("abc-2", "/repo")
+	var unregistered [][2]string
+	deps.Unregister = func(path, instance string) error {
+		unregistered = append(unregistered, [2]string{path, instance})
+		return nil
+	}
+	deps.Session = sm
+	parent := entryAt("abc", "/repo")
+	child := Entry{
+		Display:    "#2",
+		Indent:     1,
+		Path:       "/repo",
+		Slug:       "abc-2",
+		Instance:   "2",
+		IsInstance: true,
+		LastOpen:   time.Now(),
+		Kind:       state.KindIdle,
+	}
+	m := NewModel([]Entry{parent, child}).WithDeps(deps)
+	// Move cursor to the instance row.
+	m.cursor = 1
+	next, _ := m.Update(key("r"))
+	m = next.(Model)
+	next, _ = m.Update(key("y"))
+	m = next.(Model)
+	if len(unregistered) != 1 || unregistered[0] != [2]string{"/repo", "2"} {
+		t.Fatalf("Unregister calls = %v", unregistered)
+	}
+	if sm.Has("abc-2") {
+		t.Fatal("instance session should be killed on remove")
+	}
+	// Parent must remain.
+	if len(m.entries) != 1 || m.entries[0].Slug != "abc" {
+		t.Fatalf("entries after remove = %+v", m.entries)
+	}
+}
+
 func TestRemoveUnregistersRegisteredDir(t *testing.T) {
 	sm, g, _, deps := actionDeps()
 	var unregistered []string
-	deps.Unregister = func(path string) error {
+	deps.Unregister = func(path, instance string) error {
 		unregistered = append(unregistered, path)
 		return nil
 	}

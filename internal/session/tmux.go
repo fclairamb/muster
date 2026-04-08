@@ -49,7 +49,7 @@ func runTmux(args ...string) (string, error) {
 // inside a claude tmux session. Hooks installed by Start re-snap the pane
 // to this width on every window-resized / client-attached event so the
 // fixed width is preserved across attaches and live terminal resizes.
-const SidePanelWidth = 20
+const SidePanelWidth = 30
 
 // Start spawns a detached tmux session running claude in cwd. No-op if it
 // already exists. When SidePanel is enabled and the terminal is wide enough,
@@ -66,7 +66,7 @@ func (t Tmux) Start(slug, cwd string) error {
 		if _, err := runTmux(buildStartArgs(slug, cwd, claudeBinary(), t.ClaudeArgs)...); err != nil {
 			return err
 		}
-		disableMouse(slug)
+		enableMouse(slug)
 	}
 	if !t.shouldSplit() {
 		return nil
@@ -120,20 +120,20 @@ func (t Tmux) StartShell(slug, cwd string) error {
 	if _, err := runTmux(buildStartArgs(slug, cwd, shellBinary(), nil)...); err != nil {
 		return err
 	}
-	disableMouse(slug)
+	enableMouse(slug)
 	return nil
 }
 
-// disableMouse turns off tmux's mouse mode for the given session. With
-// mouse mode on (the default in many .tmux.conf setups), tmux intercepts
-// scroll-wheel events and translates them into cursor up/down keypresses
-// for any program that doesn't itself opt into the mouse protocol. That
-// hijacks the terminal emulator's native scrollback inside claude and
-// shell sessions, which is exactly what we don't want. Setting mouse off
-// per-session restores native scrollback in iTerm/Kitty/Alacritty/etc.
-// without touching the user's other tmux sessions on a different socket.
-func disableMouse(slug string) {
-	_, _ = runTmux("-L", SocketName, "set-option", "-t", SessionPrefix+slug, "mouse", "off")
+// enableMouse turns on tmux's mouse mode for the given session. With mouse
+// mode off, tmux passes scroll-wheel events through to the terminal, which
+// — in the alternate-screen buffer that tmux and claude both use —
+// translates them into arrow-up/arrow-down keypresses. Claude reads those
+// as "previous prompt in history", so trackpad scroll silently rewrites
+// the user's input instead of scrolling. With mouse on, tmux intercepts
+// the wheel itself and scrolls its own scrollback via copy-mode, which is
+// what the user actually wants.
+func enableMouse(slug string) {
+	_, _ = runTmux("-L", SocketName, "set-option", "-t", SessionPrefix+slug, "mouse", "on")
 }
 
 func (t Tmux) shouldSplit() bool {

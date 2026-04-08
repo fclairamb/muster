@@ -13,7 +13,6 @@ import (
 	"github.com/fclairamb/muster/internal/hooks"
 	"github.com/fclairamb/muster/internal/registry"
 	"github.com/fclairamb/muster/internal/repoinfo"
-	"github.com/fclairamb/muster/internal/slug"
 )
 
 // migrateCommand returns the user-visible `muster migrate` subcommand.
@@ -83,7 +82,7 @@ func runMigrate(out io.Writer) error {
 		if err := hooks.UninstallLegacy(repoRoot); err != nil {
 			fmt.Fprintf(out, "warn: uninstall legacy hooks at %s: %v\n", repoRoot, err)
 		}
-		if err := hooks.Install(repoRoot, slug.Slug(d.Path)); err != nil {
+		if err := hooks.Install(repoRoot); err != nil {
 			fmt.Fprintf(out, "warn: reinstall hooks at %s: %v\n", repoRoot, err)
 			continue
 		}

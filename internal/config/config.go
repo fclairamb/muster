@@ -17,8 +17,16 @@ type Config struct {
 }
 
 // Dir is a registered directory.
+//
+// Instance, when non-empty, marks this entry as a parallel claude instance
+// sharing the same Path as another entry. The pair (Path, Instance) is the
+// unique key inside the config — there can be at most one entry with
+// Instance == "" per path (the "primary" instance) and any number of
+// secondary entries with distinct non-empty Instance values. The slug
+// muster uses for tmux/state/hook routing is slug.For(Path, Instance).
 type Dir struct {
 	Path       string    `toml:"path"`
+	Instance   string    `toml:"instance,omitempty"`
 	LastOpened time.Time `toml:"last_opened"`
 }
 

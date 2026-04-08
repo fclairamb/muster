@@ -16,3 +16,16 @@ func Slug(absPath string) string {
 	sum := sha256.Sum256([]byte(absPath))
 	return hex.EncodeToString(sum[:])[:Length]
 }
+
+// For returns the slug for a (path, instance) pair. instance == ""
+// yields the bare directory slug; a non-empty instance yields
+// "<dirSlug>-<instance>", which is the canonical identifier for parallel
+// claude sessions sharing one directory. The instance string is assumed
+// to already be sanitized (validated by the caller via ValidateInstance).
+func For(absPath, instance string) string {
+	s := Slug(absPath)
+	if instance == "" {
+		return s
+	}
+	return s + "-" + instance
+}

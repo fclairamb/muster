@@ -71,7 +71,7 @@ func runRm(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	if err := unregister(reg, target); err != nil {
+	if err := unregister(reg, target, ""); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stdout, "unregistered", target)
@@ -123,14 +123,16 @@ func resolveTarget(dirs []config.Dir, arg string) (string, error) {
 }
 
 // unregister is the shared registered-dir removal path used by both the TUI's
-// `r` action and the `muster rm` subcommand.
+// `r` action and the `muster rm` subcommand. instance == "" addresses the
+// primary entry for path; a non-empty instance addresses a parallel claude
+// instance child.
 //
 // Symlink-tolerant: if path doesn't directly match any registered entry,
 // fall back to comparing canonicalized (EvalSymlinks) forms. This handles
 // the macOS case where /tmp registers as /tmp but resolves at runtime to
 // /private/tmp; without the fallback, removing such an entry from the TUI
 // would silently no-op and the entry would reappear next launch.
-func unregister(reg *registry.Registry, path string) error {
+func unregister(reg *registry.Registry, path, instance string) error {
 	dirs, err := reg.List()
 	if err != nil {
 		return err
@@ -140,13 +142,35 @@ func unregister(reg *registry.Registry, path string) error {
 		// Nothing to remove. Not an error — keeps the TUI snappy.
 		return nil
 	}
-	if err := reg.Remove(target); err != nil {
+	if err := reg.RemoveInstance(target, instance); err != nil {
 		return err
 	}
+	// Hooks are repo-scoped now (env-var keyed). Only uninstall when no
+	// remaining entries share this repo root, otherwise we'd disable
+	// status tracking for the parallel claude instances still registered.
 	if info, err := repoinfo.Inspect(target); err == nil {
-		_ = hooks.Uninstall(info.RepoRoot, slug.Slug(info.RepoRoot))
+		remaining, _ := reg.List()
+		if !anyDirInRepo(remaining, info.RepoRoot) {
+			_ = hooks.Uninstall(info.RepoRoot)
+		}
 	}
 	return nil
+}
+
+// anyDirInRepo reports whether any registered dir resolves to repoRoot.
+// Used to decide whether removing one entry should also tear down the
+// repo-scoped hook installation.
+func anyDirInRepo(dirs []config.Dir, repoRoot string) bool {
+	for _, d := range dirs {
+		info, err := repoinfo.Inspect(d.Path)
+		if err != nil {
+			continue
+		}
+		if info.RepoRoot == repoRoot {
+			return true
+		}
+	}
+	return false
 }
 
 // matchRegisteredPath returns the registered path (as stored in the

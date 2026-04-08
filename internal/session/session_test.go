@@ -7,7 +7,7 @@ import (
 
 func TestBuildStartArgs(t *testing.T) {
 	got := buildStartArgs("abc", "/repo", "claude", nil)
-	want := []string{"-L", "muster", "new-session", "-d", "-s", "muster-abc", "-c", "/repo", "claude"}
+	want := []string{"-L", "muster", "new-session", "-d", "-s", "muster-abc", "-e", "MUSTER_SLUG=abc", "-c", "/repo", "claude"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
@@ -15,7 +15,7 @@ func TestBuildStartArgs(t *testing.T) {
 
 func TestBuildStartArgsWithClaudeArgs(t *testing.T) {
 	got := buildStartArgs("abc", "/repo", "claude", []string{"--dangerously-skip-permissions", "--foo"})
-	want := []string{"-L", "muster", "new-session", "-d", "-s", "muster-abc", "-c", "/repo", "claude", "--dangerously-skip-permissions", "--foo"}
+	want := []string{"-L", "muster", "new-session", "-d", "-s", "muster-abc", "-e", "MUSTER_SLUG=abc", "-c", "/repo", "claude", "--dangerously-skip-permissions", "--foo"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}

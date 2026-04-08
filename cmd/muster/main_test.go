@@ -235,6 +235,66 @@ func TestSubcommandsAllowedInsideTmux(t *testing.T) {
 	}
 }
 
+func TestHookWriteFromEnv(t *testing.T) {
+	// Canonical form: slug from $MUSTER_SLUG, kind from argv. This is
+	// what the post-refactor settings.local.json installs.
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go missing")
+	}
+	bin := buildBinary(t)
+	xdg := t.TempDir()
+	repo := t.TempDir()
+
+	cmd := exec.Command(bin, "hook", "write", "ready")
+	cmd.Dir = repo
+	cmd.Env = append(os.Environ(),
+		"XDG_CONFIG_HOME="+xdg,
+		"HOME="+xdg,
+		"MUSTER_SLUG=envslug42",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("hook write (env form): %v %s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".muster", "state", "envslug42.json")); err != nil {
+		t.Fatalf("state file for env-derived slug missing: %v", err)
+	}
+}
+
+func TestHookWriteEnvFormRequiresSlug(t *testing.T) {
+	// Without MUSTER_SLUG set, the canonical (1-arg) form must error
+	// rather than silently writing to an empty slug.
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go missing")
+	}
+	bin := buildBinary(t)
+	xdg := t.TempDir()
+	repo := t.TempDir()
+
+	cmd := exec.Command(bin, "hook", "write", "ready")
+	cmd.Dir = repo
+	cmd.Env = append(stripMusterSlug(os.Environ()),
+		"XDG_CONFIG_HOME="+xdg, "HOME="+xdg,
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error when MUSTER_SLUG unset, got success: %s", out)
+	}
+	if !strings.Contains(string(out), "MUSTER_SLUG") {
+		t.Fatalf("error should mention MUSTER_SLUG, got: %s", out)
+	}
+}
+
+func stripMusterSlug(env []string) []string {
+	out := env[:0]
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "MUSTER_SLUG=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
 func TestHookWriteCreatesStateFile(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go missing")

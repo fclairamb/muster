@@ -167,7 +167,7 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 			if repoRoot == "" {
 				repoRoot = abs
 			}
-			if err := hooks.Install(repoRoot, slug.Slug(abs)); err != nil {
+			if err := hooks.Install(repoRoot); err != nil {
 				slog.Warn("install hooks", "err", err)
 			}
 			if err := gitignore.EnsureMusterIgnored(repoRoot); err != nil {
@@ -193,14 +193,24 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 
 // hookCommand returns the hidden hook subcommand tree.
 //
-// IMPORTANT: the literal command string "muster hook write <slug> <kind>" is
-// hard-coded into every .claude/settings.json file muster installs (see
-// internal/hooks/hooks.go). Renaming this subcommand or its arguments will
-// break every existing installation. Lock the name.
+// IMPORTANT: the literal command string "muster hook write <state>" is
+// hard-coded into every .claude/settings.local.json file muster installs
+// (see internal/hooks/hooks.go). Renaming "hook write" breaks every
+// existing installation. Lock the name.
 //
-// HISTORY: this was previously "ssf hook write …". Slice 15 renamed the
-// project from ssf to muster; the rename is the one and only exception.
-// `muster migrate` rewrites legacy entries via UninstallLegacy + Install.
+// The slug for state-file routing is read from the MUSTER_SLUG environment
+// variable, which muster injects into each tmux session via
+// `new-session -e MUSTER_SLUG=<slug>`. This lets multiple parallel claude
+// instances in the same repo share one settings.local.json while still
+// writing to distinct on-disk state files.
+//
+// HISTORY:
+//   - "ssf hook write <slug> <state>" — initial form, scrubbed by
+//     UninstallLegacy on the ssf→muster rename.
+//   - "muster hook write <slug> <state>" — slug-in-argv form. Still
+//     accepted by this subcommand for backward compatibility, deprecated
+//     and rewritten to the new form by hooks.Install on next launch.
+//   - "muster hook write <state>" — current form, slug from env.
 func hookCommand() *cli.Command {
 	return &cli.Command{
 		Name:   "hook",
@@ -209,7 +219,7 @@ func hookCommand() *cli.Command {
 		Commands: []*cli.Command{
 			{
 				Name:      "write",
-				ArgsUsage: "<slug> <state>",
+				ArgsUsage: "<state>  (slug from $MUSTER_SLUG)",
 				Action:    runHookWrite,
 			},
 		},
@@ -218,11 +228,24 @@ func hookCommand() *cli.Command {
 
 func runHookWrite(ctx context.Context, cmd *cli.Command) error {
 	args := cmd.Args()
-	if args.Len() < 2 {
-		return fmt.Errorf("usage: muster hook write <slug> <state>")
+	var hookSlug string
+	var kind state.Kind
+	switch args.Len() {
+	case 1:
+		// Canonical form: slug from env, kind from argv.
+		hookSlug = os.Getenv("MUSTER_SLUG")
+		if hookSlug == "" {
+			return fmt.Errorf("muster hook write: MUSTER_SLUG not set in environment")
+		}
+		kind = state.Kind(args.Get(0))
+	case 2:
+		// Legacy form: <slug> <state> in argv. Tolerated so older
+		// settings.local.json installs keep working until reinstalled.
+		hookSlug = args.Get(0)
+		kind = state.Kind(args.Get(1))
+	default:
+		return fmt.Errorf("usage: muster hook write <state>  (or legacy: <slug> <state>)")
 	}
-	hookSlug := args.Get(0)
-	kind := state.Kind(args.Get(1))
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -268,22 +291,34 @@ func buildEntries(reg *registry.Registry) ([]tui.Entry, error) {
 
 	entries := make([]tui.Entry, 0, len(dirs))
 	for i, d := range dirs {
-		// Slug is derived from the *registered* path, not the repo root.
-		// This makes subdirs distinct entries from their parent repo.
-		s := slug.Slug(d.Path)
+		// Slug is derived from the *registered* path + instance label.
+		// Subdirs are distinct from their parent repo, and parallel
+		// claude instances are distinct from their primary entry.
+		s := slug.For(d.Path, d.Instance)
 		repoRoot := infos[i].RepoRoot
 		if repoRoot == "" {
 			repoRoot = d.Path
 		}
 		st, _ := state.Read(repoRoot, s)
+		display := render.Line(d, infos[i], prefixes[infos[i].Org])
+		var indent int
+		if d.Instance != "" {
+			// Instance children render compactly under their parent so
+			// the user sees them grouped beneath the primary row.
+			display = "#" + d.Instance
+			indent = 1
+		}
 		entries = append(entries, tui.Entry{
-			Display:  render.Line(d, infos[i], prefixes[infos[i].Org]),
-			Path:     d.Path,
-			RepoRoot: repoRoot,
-			Slug:     s,
-			Kind:     st.Kind,
-			LastOpen: d.LastOpened,
-			Stats:    gitstats.Compute(d.Path),
+			Display:    display,
+			Indent:     indent,
+			Path:       d.Path,
+			RepoRoot:   repoRoot,
+			Slug:       s,
+			Instance:   d.Instance,
+			Kind:       st.Kind,
+			LastOpen:   d.LastOpened,
+			IsInstance: d.Instance != "",
+			Stats:      gitstats.Compute(d.Path),
 		})
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
@@ -312,8 +347,18 @@ func launchTUI(parent context.Context, reg *registry.Registry, entries []tui.Ent
 		AttachCmdFunc: func(s string) *exec.Cmd {
 			return exec.Command("tmux", "-L", session.SocketName, "attach", "-t", session.SessionPrefix+s)
 		},
-		Unregister: func(path string) error {
-			return unregister(reg, path)
+		Unregister: func(path, instance string) error {
+			return unregister(reg, path, instance)
+		},
+		AddInstance: func(parentPath, instance string) (string, error) {
+			if err := reg.AddInstance(parentPath, instance); err != nil {
+				return "", err
+			}
+			s := slug.For(parentPath, instance)
+			if err := tmux.Start(s, parentPath); err != nil {
+				return "", err
+			}
+			return s, nil
 		},
 		ReadState: func(repoRoot, slug string) state.State {
 			st, _ := state.Read(repoRoot, slug)

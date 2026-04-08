@@ -52,9 +52,18 @@ func (r *Registry) List() ([]config.Dir, error) {
 	return c.Dirs, nil
 }
 
-// Add registers path (resolved to absolute) and updates its LastOpened.
-// Idempotent: re-adding bumps LastOpened.
+// Add registers path (resolved to absolute) as the primary instance and
+// updates its LastOpened. Idempotent: re-adding bumps LastOpened. Only
+// touches the entry whose Instance == "".
 func (r *Registry) Add(path string) error {
+	return r.AddInstance(path, "")
+}
+
+// AddInstance registers (path, instance) and updates its LastOpened.
+// Idempotent on the (path, instance) pair. instance == "" addresses the
+// primary entry; a non-empty instance creates (or touches) a parallel
+// claude session sharing the same directory.
+func (r *Registry) AddInstance(path, instance string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("abs path: %w", err)
@@ -65,17 +74,24 @@ func (r *Registry) Add(path string) error {
 	}
 	now := r.now()
 	for i, d := range c.Dirs {
-		if d.Path == abs {
+		if d.Path == abs && d.Instance == instance {
 			c.Dirs[i].LastOpened = now
 			return config.Save(r.Path, c)
 		}
 	}
-	c.Dirs = append(c.Dirs, config.Dir{Path: abs, LastOpened: now})
+	c.Dirs = append(c.Dirs, config.Dir{Path: abs, Instance: instance, LastOpened: now})
 	return config.Save(r.Path, c)
 }
 
-// Remove deletes path from the registry. No-op if absent.
+// Remove deletes the primary entry for path. No-op if absent. Secondary
+// instances at the same path are NOT removed — call RemoveInstance for
+// fine-grained removal.
 func (r *Registry) Remove(path string) error {
+	return r.RemoveInstance(path, "")
+}
+
+// RemoveInstance deletes a single (path, instance) entry. No-op if absent.
+func (r *Registry) RemoveInstance(path, instance string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("abs path: %w", err)
@@ -86,15 +102,18 @@ func (r *Registry) Remove(path string) error {
 	}
 	out := c.Dirs[:0]
 	for _, d := range c.Dirs {
-		if d.Path != abs {
-			out = append(out, d)
+		if d.Path == abs && d.Instance == instance {
+			continue
 		}
+		out = append(out, d)
 	}
 	c.Dirs = out
 	return config.Save(r.Path, c)
 }
 
-// Touch bumps LastOpened for path. Returns ErrNotFound if absent.
+// Touch bumps LastOpened for the primary entry at path. Returns
+// ErrNotFound if absent. Secondary instances are addressed via the
+// (path, instance) variant in AddInstance (which is idempotent).
 func (r *Registry) Touch(path string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -105,7 +124,7 @@ func (r *Registry) Touch(path string) error {
 		return err
 	}
 	for i, d := range c.Dirs {
-		if d.Path == abs {
+		if d.Path == abs && d.Instance == "" {
 			c.Dirs[i].LastOpened = r.now()
 			return config.Save(r.Path, c)
 		}
