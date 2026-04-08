@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -44,9 +45,21 @@ func runTmux(args ...string) (string, error) {
 	return out.String(), nil
 }
 
+// SidePanelWidth is the absolute column width of the muster files side panel
+// inside a claude tmux session. Hooks installed by Start re-snap the pane
+// to this width on every window-resized / client-attached event so the
+// fixed width is preserved across attaches and live terminal resizes.
+const SidePanelWidth = 20
+
 // Start spawns a detached tmux session running claude in cwd. No-op if it
 // already exists. When SidePanel is enabled and the terminal is wide enough,
 // also splits the window and runs `muster files <cwd>` in the right pane.
+//
+// Right-pane width is locked to SidePanelWidth columns via tmux session
+// hooks. Without the hooks, tmux scales pane sizes proportionally when the
+// window resizes (e.g. on attach from a wider client), so a "split with
+// -l 20" pane would balloon to dozens of columns the moment a real client
+// connects. The hooks self-heal on every relevant event.
 func (t Tmux) Start(slug, cwd string) error {
 	existed := t.Has(slug)
 	if !existed {
@@ -54,24 +67,20 @@ func (t Tmux) Start(slug, cwd string) error {
 			return err
 		}
 	}
-	if existed && t.shouldSplit() {
-		// Resize the right pane on every attach so old sessions self-heal.
-		_, _ = runTmux("-L", SocketName, "resize-pane", "-t", SessionPrefix+slug+":0.1", "-x", "20")
+	if !t.shouldSplit() {
 		return nil
 	}
-	if existed {
-		return nil
-	}
-	if t.shouldSplit() {
+	if !existed {
 		bin := t.SsfBinary
 		if bin == "" {
 			bin = "muster"
 		}
-		// Split horizontally and give the new (right) pane a fixed 20-col
-		// width. `-l 24` is cells (not a percentage — that would need `%`).
+		// Split horizontally and give the new (right) pane a fixed
+		// SidePanelWidth-column width. `-l N` is cells (not a percentage
+		// — that would need a `%`).
 		_, _ = runTmux(
 			"-L", SocketName,
-			"split-window", "-h", "-l", "20",
+			"split-window", "-h", "-l", strconv.Itoa(SidePanelWidth),
 			"-t", SessionPrefix+slug+":0",
 			"-c", cwd,
 			bin+" files "+cwd,
@@ -79,7 +88,24 @@ func (t Tmux) Start(slug, cwd string) error {
 		// Focus the left pane (claude) so the user lands there on attach.
 		_, _ = runTmux("-L", SocketName, "select-pane", "-t", SessionPrefix+slug+":0.0")
 	}
+	t.installSidePanelHooks(slug)
 	return nil
+}
+
+// installSidePanelHooks (re)installs session-level tmux hooks that snap the
+// right pane back to SidePanelWidth columns whenever the window changes
+// size or a client attaches. Idempotent: set-hook overwrites the previous
+// hook for the same event. Safe to call on existing sessions to self-heal
+// older installs that did not have the hooks.
+func (t Tmux) installSidePanelHooks(slug string) {
+	target := SessionPrefix + slug
+	resize := "resize-pane -t " + target + ":0.1 -x " + strconv.Itoa(SidePanelWidth)
+	for _, ev := range []string{"window-resized", "client-attached", "client-resized"} {
+		_, _ = runTmux("-L", SocketName, "set-hook", "-t", target, ev, resize)
+	}
+	// One-shot: snap right now in case the window is already at its
+	// final size (e.g. existing session being reattached to).
+	_, _ = runTmux("-L", SocketName, "resize-pane", "-t", target+":0.1", "-x", strconv.Itoa(SidePanelWidth))
 }
 
 // StartShell spawns a detached tmux session running the user's shell in cwd.

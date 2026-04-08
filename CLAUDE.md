@@ -133,12 +133,64 @@ them) but are **keyed by the subdir's slug**, so each subdir has its own
 session and state file. `Entry.RepoRoot` carries the git toplevel for
 state file addressing; `Entry.Path` is the registered subdir.
 
-### Side panel is opt-out with width gating
+### Side panel is opt-out with width gating + hook-locked width
 
 `Tmux.Start` splits the window horizontally and runs `muster files <cwd>` in
 the right pane when `SidePanel` is true AND terminal width ≥ 100 columns.
 Both settings are in `internal/session/tmux.go`; terminal width is
 captured in `cmd/muster/main.go` before tmux suspends muster.
+
+The right pane is locked to `session.SidePanelWidth` (20 cols) via tmux
+session hooks installed by `installSidePanelHooks`:
+
+- `window-resized` → `resize-pane -x 20`
+- `client-attached` → `resize-pane -x 20`
+- `client-resized` → `resize-pane -x 20`
+
+Without these hooks, tmux scales pane sizes proportionally when the window
+grows (e.g. when an attaching client has a wider terminal than the
+detached default of 80×24). A pane created with `split-window -l 20`
+balloons to 80+ cols on first attach. The hooks self-heal on every
+relevant event, and `Start` also calls them on existing sessions on
+re-attach so older installs without the hooks get fixed automatically.
+
+### Shell sessions live under a `-sh` slug suffix
+
+`actionShell` (bound to `s`) starts a parallel tmux session running
+`$SHELL` for the selected entry. The session name is
+`muster-<slug>-sh`, distinct from the claude session's `muster-<slug>`,
+so it never collides with — or appears in — the entry's status
+reconciliation. The shell session has no side panel; it's a plain
+interactive shell. Killing or restarting one does not affect the other.
+
+### Branch picker (`b`) and in-flight op indicator
+
+`actionBranchPicker` opens a filterable list of local branches loaded
+asynchronously via `git branch --format=%(refname:short)`. Enter checks
+out the highlighted match (or `git checkout -b <name>` when nothing
+matches). On success the row's `Display` is updated in place via
+`setDisplayBranch` so the new branch is visible immediately without
+restarting muster.
+
+All long-running git operations (pull/push/merge-main, worktree
+add/remove, branch list, checkout) register an in-flight entry on the
+Model via `beginOp(label)` and clear it via `endOp(id)`. The currently
+active ops render as a `⏳ <label1>, <label2>` line above the footer.
+The wrapping is generic — `wrapOp(id, cmd)` envelopes any `tea.Cmd`'s
+result in `opMsg{id, msg}`, which `Update` unwraps before re-dispatching
+the inner message. `statsCmd` is intentionally NOT wrapped: it fires
+once per refresh tick per entry and would just spam the indicator.
+
+### Worktrees added in-TUI nest under their parent
+
+Pressing `n` and naming a branch runs `git worktree add` and then —
+on success — inserts a fresh `Entry{Indent: 1, IsWorktree: true,
+Display: "[<branch>]"}` directly after the parent in `m.entries` via
+`insertAfterSlug`. `SortEntries` keeps `Indent==0` parents grouped with
+their `Indent>0` children, so the new worktree appears nested without
+restarting muster. The worktree path is the single source of truth in
+`WorktreePathFor(repo, branch)`, used by both the git arg builder and
+the post-create entry insertion.
 
 ## Testing philosophy
 

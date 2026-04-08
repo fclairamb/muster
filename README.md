@@ -11,13 +11,25 @@ sitting between the two — featureful without eating all your power.
   tmux session on the `-L muster` socket. Nothing touches your default tmux.
 - **Live status indicators** (🔴 waiting for input, 🟢 ready, 🟡 working,
   ⚪ idle) driven by Claude Code hooks. Installed automatically when you
-  register a directory.
+  register a directory, into the gitignored `.claude/settings.local.json`
+  so they never end up in commits.
 - **macOS notifications** on state transitions (`Needs input` / `Ready`),
   with grouping and click-to-focus when `terminal-notifier` is installed.
 - **Right-pane file list** showing modified / staged / untracked files
-  live next to claude, refreshed via fsnotify.
+  live next to claude, refreshed via fsnotify. Locked to 20 columns wide
+  via tmux session hooks so it stays the same size across attaches and
+  terminal resizes.
 - **Subdirs and worktrees as first-class entries** — register a subdir
-  and it stays as-is instead of collapsing to the repo root.
+  and it stays as-is instead of collapsing to the repo root. Worktrees
+  created in-TUI with `n` appear nested under their parent.
+- **In-TUI branch picker** (`b`): filterable list of local branches,
+  Enter checks out or creates one. The row's branch display updates
+  immediately on success.
+- **Parallel shell sessions** (`s`): a separate `muster-<slug>-sh` tmux
+  session running `$SHELL` in the entry's directory, independent of the
+  claude session.
+- **In-flight progress indicator** for every long git op (pull/push,
+  worktree add/remove, branch list, checkout) shown above the footer.
 - **Terminal-title updates** so `muster: list` or `s/datalake [main] ⚪`
   shows in your window title.
 
@@ -50,9 +62,12 @@ muster migrate
 ```
 
 It copies the registry to `~/.config/muster/config.toml`, renames each
-repo's `.ssf/state/` to `.muster/state/`, and rewrites every repo's
-`.claude/settings.json` to use `muster hook write` instead of
-`ssf hook write`. The old config is left in place as a recovery
+repo's `.ssf/state/` to `.muster/state/`, scrubs any legacy `ssf hook write`
+entries, and reinstalls the muster hooks into
+`.claude/settings.local.json` (the gitignored local-overrides file
+Claude Code reads on top of `settings.json`). If the only thing left in
+the committed `settings.json` was the muster block, the file is removed
+entirely. The old `~/.config/ssf` is left in place as a recovery
 breadcrumb. Idempotent — re-running is a no-op.
 
 Requirements:
@@ -83,9 +98,15 @@ In the TUI:
 | `↑` / `↓` | Move cursor                                                 |
 | `Enter`   | Attach to (or start) the claude session for this entry     |
 | `/`       | Filter entries by substring                                 |
-| `n`       | Create a new git worktree from the selected repo            |
+| `s`       | Open a parallel shell tmux session for the entry            |
+| `n`       | Create a new git worktree from the selected repo (nested)   |
+| `b`       | Branch picker — checkout an existing branch or create one   |
+| `u`       | `git pull` in the entry's directory                         |
+| `m`       | `git pull origin main` (merge main into the current branch) |
+| `p`       | `git push`                                                  |
 | `o`       | Open the directory in your file manager (`$FILE_MANAGER` or `open`) |
 | `e`       | Open the directory in your editor (`$VISUAL`, `$EDITOR`, or `zed`) |
+| `x`       | Stop the entry's claude tmux session (keeps it registered)  |
 | `r`       | Remove entry (with confirmation; worktrees vs unregister differ) |
 | `q`       | Quit                                                        |
 
@@ -129,12 +150,22 @@ Lives at `$XDG_CONFIG_HOME/muster/config.toml` (default `~/.config/muster/config
 ## How it works
 
 - **Registration** writes the absolute path into `config.toml` and installs
-  a set of Claude Code hooks into `.claude/settings.json` at the repo root.
-  The hooks are keyed by a sha256-based slug of the registered path so
-  subdirs of the same repo get distinct sessions.
+  a set of Claude Code hooks into `.claude/settings.local.json` at the
+  repo root (gitignored — never lands in commits). On install muster also
+  scrubs any matching slug entries from the committed `.claude/settings.json`
+  so older installs are migrated automatically, and ensures
+  `.claude/settings.local.json` is in `.gitignore`. The hooks are keyed
+  by a sha256-based slug of the registered path so subdirs of the same
+  repo get distinct sessions.
 - **Session lifecycle** is driven by `tmux new-session -L muster -s muster-<slug>`.
   Each session runs `claude` (or `$MUSTER_CLAUDE_BINARY`) with the configured
-  args. Optionally a right pane runs `muster files <dir>` for the live file list.
+  args. Optionally a right pane runs `muster files <dir>` for the live file list,
+  pinned to 20 columns wide via tmux session hooks (`window-resized`,
+  `client-attached`, `client-resized`) so it stays the same size whether
+  you attach from a 90-col laptop or a 300-col ultrawide.
+- **Shell sessions** (`s` in the TUI) run the user's `$SHELL` in a
+  separate `muster-<slug>-sh` tmux session. Independent of the claude
+  session, never appears in status reconciliation.
 - **Status detection** happens via Claude Code hooks:
   - `SessionStart` → idle (⚪)
   - `UserPromptSubmit` → working (🟡)
@@ -144,12 +175,14 @@ Lives at `$XDG_CONFIG_HOME/muster/config.toml` (default `~/.config/muster/config
   - `PostToolUse[matcher=AskUserQuestion]` → working (🟡)
   Each hook invokes `muster hook write <slug> <kind>` which atomically writes
   the state to `<repo-root>/.muster/state/<slug>.json`.
-- **Staleness decay**: if a `working` or `waiting_input` state is older
-  than 30 seconds and no update arrived, it decays to `idle`. This handles
-  the case where claude went quiet without firing a `Stop` hook.
-- **Reconciliation on refresh** (every second): an entry's color is
-  whatever the state file says, capped by `tmux list-sessions` membership.
-  No session running → no bubble, regardless of stale files.
+- **Reconciliation on refresh** (every second): while the tmux session is
+  alive, the row's color is exactly what the state file says — no
+  staleness decay. Earlier versions decayed `working` / `waiting_input`
+  to `idle` after 30 seconds, which incorrectly flipped long Claude
+  turns to white; the fix is to trust the hook system, and you can press
+  `x` to stop a wedged session if it ever happens. When the tmux session
+  is gone, the row falls back to no-bubble regardless of any stale state
+  file left behind.
 
 ## Keyboard at a glance
 
