@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Info describes a directory's git status as far as ssf cares.
+// Info describes a directory's git status as far as muster cares.
 type Info struct {
 	RepoRoot string
 	Branch   string

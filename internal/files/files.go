@@ -1,6 +1,6 @@
 // Package files renders a live "what changed" view for a single directory.
 //
-// Used by the `ssf files <dir>` hidden subcommand to populate the right tmux
+// Used by the `muster files <dir>` hidden subcommand to populate the right tmux
 // pane next to a claude session. Output is plain text with ANSI color codes;
 // no boxes, borders, or animations.
 package files

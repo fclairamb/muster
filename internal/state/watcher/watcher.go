@@ -11,7 +11,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"github.com/fclairamb/ssf/internal/state"
+	"github.com/fclairamb/muster/internal/state"
 )
 
 // Defaults for the debounce / green-confirm windows. Tests may shorten them.
@@ -27,10 +27,10 @@ type Event struct {
 	State    state.State
 }
 
-// Watch starts a goroutine that watches each repoRoot's .ssf/state directory
+// Watch starts a goroutine that watches each repoRoot's .muster/state directory
 // and emits events on the returned channel until ctx is cancelled.
 //
-// Repos whose .ssf/state directory does not yet exist are still tracked: the
+// Repos whose .muster/state directory does not yet exist are still tracked: the
 // watcher polls for the directory's creation every second.
 func Watch(ctx context.Context, repoRoots []string) (<-chan Event, error) {
 	out := make(chan Event, 16)

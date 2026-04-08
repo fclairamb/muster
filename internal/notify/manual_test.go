@@ -6,7 +6,7 @@ import "testing"
 
 func TestRealOsascript(t *testing.T) {
 	n := Notification{
-		Title:    "ssf",
+		Title:    "muster",
 		Subtitle: "s/datalake [main]",
 		Body:     "if you see this, notifications work",
 		Sound:    "Glass",
@@ -18,11 +18,11 @@ func TestRealOsascript(t *testing.T) {
 
 func TestRealBestNotifier(t *testing.T) {
 	n := Notification{
-		Title:    "ssf",
+		Title:    "muster",
 		Subtitle: "smoke test",
 		Body:     "best-notifier path",
 		Sound:    "Funk",
-		Group:    "ssf-smoketest",
+		Group:    "muster-smoketest",
 	}
 	if err := NewBest().Notify(n); err != nil {
 		t.Fatalf("best: %v", err)

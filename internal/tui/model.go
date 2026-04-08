@@ -1,4 +1,4 @@
-// Package tui implements the Bubble Tea TUI for ssf.
+// Package tui implements the Bubble Tea TUI for muster.
 package tui
 
 import (
@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/fclairamb/ssf/internal/state"
+	"github.com/fclairamb/muster/internal/state"
 )
 
 // modalKind is the kind of overlay currently shown over the list, if any.
@@ -47,7 +47,7 @@ type Model struct {
 }
 
 // WithAutoAttach makes the next Init() emit an AttachMsg targeting slug.
-// Used by `ssf <dir>` to immediately drop the user into claude for the
+// Used by `muster <dir>` to immediately drop the user into claude for the
 // directory they just registered.
 func (m Model) WithAutoAttach(slug string) Model {
 	m.autoAttachSlug = slug
@@ -68,7 +68,7 @@ func (m Model) WithDeps(d Deps) Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{tea.SetWindowTitle("ssf: list")}
+	cmds := []tea.Cmd{tea.SetWindowTitle("muster: list")}
 	if m.autoAttachSlug != "" {
 		slug := m.autoAttachSlug
 		cmds = append(cmds, func() tea.Msg { return AttachMsg{Slug: slug} })
@@ -77,7 +77,7 @@ func (m Model) Init() tea.Cmd {
 }
 
 // titleListView is the terminal title shown while the user is in the list.
-const titleListView = "ssf: list"
+const titleListView = "muster: list"
 
 // titleAttached returns the terminal title shown while the user is attached
 // to a session: "<display> <emoji>". The "(ssf)" tag is only shown in the
@@ -91,14 +91,14 @@ func titleAttached(e Entry) string {
 }
 
 // RefreshMsg triggers a re-read of state from disk for every entry. The
-// message is exported so cmd/ssf can drive the refresh from a background
+// message is exported so cmd/muster can drive the refresh from a background
 // goroutine via program.Send — more reliable than tea.Tick across
 // ExecProcess suspensions.
 type RefreshMsg struct{}
 
 // AttachMsg is a request to attach to the claude session for a given slug,
 // emitted programmatically (not from a key press). Used to auto-attach when
-// ssf is invoked with a directory argument.
+// muster is invoked with a directory argument.
 type AttachMsg struct{ Slug string }
 
 // attachExitedMsg is emitted by the tea.ExecProcess callback once the user
@@ -479,7 +479,7 @@ func (m Model) View() string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("ssf — superset, fixed\n\n")
+	b.WriteString("muster\n\n")
 	for i, e := range m.filtered {
 		cursor := "  "
 		if i == m.cursor {

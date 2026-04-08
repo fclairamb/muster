@@ -3,9 +3,10 @@ package render
 
 import (
 	"path/filepath"
+	"strings"
 
-	"github.com/fclairamb/ssf/internal/config"
-	"github.com/fclairamb/ssf/internal/repoinfo"
+	"github.com/fclairamb/muster/internal/config"
+	"github.com/fclairamb/muster/internal/repoinfo"
 )
 
 // Line returns the human-readable label for a single registered directory.
@@ -30,13 +31,19 @@ func Line(d config.Dir, info repoinfo.Info, prefix string) string {
 }
 
 // subPath returns the path of dir relative to repoRoot, or "" if dir IS the
-// repo root or the relative path can't be computed.
+// repo root or the relative path can't be computed cleanly. A rel that
+// starts with ".." means dir is outside the repo (most often a macOS
+// symlink mismatch like /tmp vs /private/tmp); in that case we treat dir
+// as the repo root and return "".
 func subPath(dir, repoRoot string) string {
 	if dir == "" || repoRoot == "" || dir == repoRoot {
 		return ""
 	}
 	rel, err := filepath.Rel(repoRoot, dir)
 	if err != nil || rel == "." || rel == "" {
+		return ""
+	}
+	if strings.HasPrefix(rel, "..") {
 		return ""
 	}
 	return rel

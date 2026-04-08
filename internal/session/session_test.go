@@ -7,7 +7,7 @@ import (
 
 func TestBuildStartArgs(t *testing.T) {
 	got := buildStartArgs("abc", "/repo", "claude", nil)
-	want := []string{"-L", "ssf", "new-session", "-d", "-s", "ssf-abc", "-c", "/repo", "claude"}
+	want := []string{"-L", "muster", "new-session", "-d", "-s", "muster-abc", "-c", "/repo", "claude"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
@@ -15,7 +15,7 @@ func TestBuildStartArgs(t *testing.T) {
 
 func TestBuildStartArgsWithClaudeArgs(t *testing.T) {
 	got := buildStartArgs("abc", "/repo", "claude", []string{"--dangerously-skip-permissions", "--foo"})
-	want := []string{"-L", "ssf", "new-session", "-d", "-s", "ssf-abc", "-c", "/repo", "claude", "--dangerously-skip-permissions", "--foo"}
+	want := []string{"-L", "muster", "new-session", "-d", "-s", "muster-abc", "-c", "/repo", "claude", "--dangerously-skip-permissions", "--foo"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
@@ -72,11 +72,11 @@ func TestShouldSplitGating(t *testing.T) {
 }
 
 func TestClaudeBinaryEnv(t *testing.T) {
-	t.Setenv("SSF_CLAUDE_BINARY", "/path/to/fake")
+	t.Setenv("MUSTER_CLAUDE_BINARY", "/path/to/fake")
 	if got := claudeBinary(); got != "/path/to/fake" {
 		t.Fatalf("got %q", got)
 	}
-	t.Setenv("SSF_CLAUDE_BINARY", "")
+	t.Setenv("MUSTER_CLAUDE_BINARY", "")
 	if got := claudeBinary(); got != "claude" {
 		t.Fatalf("default = %q", got)
 	}

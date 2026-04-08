@@ -15,15 +15,15 @@ type Tmux struct {
 	ClaudeArgs []string
 
 	// SidePanel, when true, splits the tmux window after creating it and
-	// runs `ssf files <cwd>` in the right pane. Gated on TerminalWidth.
+	// runs `muster files <cwd>` in the right pane. Gated on TerminalWidth.
 	SidePanel bool
 
-	// SsfBinary is the path to the ssf binary used for the side panel
-	// command. Defaults to "ssf" (resolved via PATH) when empty.
+	// SsfBinary is the path to the muster binary used for the side panel
+	// command. Defaults to "muster" (resolved via PATH) when empty.
 	SsfBinary string
 
 	// TerminalWidth is the user's current terminal width in columns,
-	// captured before tmux suspends ssf. The side panel is skipped when
+	// captured before tmux suspends muster. The side panel is skipped when
 	// this is below MinPanelWidth (or 100 if MinPanelWidth is zero).
 	TerminalWidth int
 	MinPanelWidth int
@@ -46,7 +46,7 @@ func runTmux(args ...string) (string, error) {
 
 // Start spawns a detached tmux session running claude in cwd. No-op if it
 // already exists. When SidePanel is enabled and the terminal is wide enough,
-// also splits the window and runs `ssf files <cwd>` in the right pane.
+// also splits the window and runs `muster files <cwd>` in the right pane.
 func (t Tmux) Start(slug, cwd string) error {
 	if t.Has(slug) {
 		return nil
@@ -57,9 +57,9 @@ func (t Tmux) Start(slug, cwd string) error {
 	if t.shouldSplit() {
 		bin := t.SsfBinary
 		if bin == "" {
-			bin = "ssf"
+			bin = "muster"
 		}
-		// Split horizontally, give the right pane 30%, run `ssf files`.
+		// Split horizontally, give the right pane 30%, run `muster files`.
 		_, _ = runTmux(
 			"-L", SocketName,
 			"split-window", "-h", "-l", "30%",
@@ -112,7 +112,7 @@ func (Tmux) Kill(slug string) error {
 	return err
 }
 
-// List returns the slugs of currently running ssf-* sessions.
+// List returns the slugs of currently running muster-* sessions.
 func (Tmux) List() ([]string, error) {
 	out, err := runTmux(buildListArgs()...)
 	if err != nil {

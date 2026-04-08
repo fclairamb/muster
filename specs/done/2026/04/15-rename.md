@@ -238,4 +238,11 @@ test -f /tmp/ssf-rename-test/muster/config.toml
 
 ## Implementation Plan
 
-(filled in by /implement-todos)
+Six commits, each must leave the tree building:
+
+1. **Module path**: `go mod edit -module github.com/fclairamb/muster`, then sed-replace every `github.com/fclairamb/ssf` import. `go mod tidy`. Run all tests.
+2. **Cmd dir rename**: `git mv cmd/ssf cmd/muster`. Update Makefile build target. Tests pass.
+3. **Runtime constants**: rename `SocketName`, `SessionPrefix`, `claudeBinary` env, `state.DirPath`, `config.DefaultPath`, `hooks.command` literal. Update every hardcoded test string in lockstep. Update don't-rename comments to point at slice 15.
+4. **Hooks legacy uninstaller**: new `hooks.UninstallLegacy(repoRoot)` that strips any inner hook whose command starts with `ssf hook write `. Test.
+5. **Migrate command + auto-migration**: `cmd/muster/migrate.go` with `migrateCommand()` (visible) and `autoMigrateIfNeeded()` called from `main()`. End-to-end test. Wire into `newApp().Commands`.
+6. **Makefile + docs**: install target creates `mst` symlink. README and CLAUDE.md rewritten.
