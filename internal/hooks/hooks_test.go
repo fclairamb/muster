@@ -79,6 +79,25 @@ func TestInstallSecondSlugCoexists(t *testing.T) {
 	}
 }
 
+func TestInstallWritesAskUserQuestionMatcher(t *testing.T) {
+	repo := t.TempDir()
+	if err := Install(repo, "abc"); err != nil {
+		t.Fatal(err)
+	}
+	m := readSettings(t, repo)
+	hooks, _ := m["hooks"].(map[string]any)
+	for _, ev := range []string{"PreToolUse", "PostToolUse"} {
+		entries, _ := hooks[ev].([]any)
+		if len(entries) == 0 {
+			t.Fatalf("event %s missing", ev)
+		}
+		em, _ := entries[0].(map[string]any)
+		if em["matcher"] != "AskUserQuestion" {
+			t.Fatalf("event %s missing AskUserQuestion matcher: %v", ev, em)
+		}
+	}
+}
+
 func TestUninstall(t *testing.T) {
 	repo := t.TempDir()
 	_ = Install(repo, "abc")

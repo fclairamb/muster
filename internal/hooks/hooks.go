@@ -9,16 +9,27 @@ import (
 	"strings"
 )
 
-// hookEvents lists the Claude Code hook event names ssf reacts to and the
-// state kind each one writes.
-var hookEvents = []struct {
-	Event string
-	Kind  string
-}{
-	{"SessionStart", "idle"},
-	{"UserPromptSubmit", "working"},
-	{"Stop", "ready"},
-	{"Notification", "waiting_input"},
+// hookEvents lists the Claude Code hook event names ssf reacts to, the
+// optional tool-name matcher (empty = fire for all tools), and the state
+// kind each one writes.
+//
+// PreToolUse + AskUserQuestion → waiting_input is the way ssf detects
+// interactive multiple-choice questions, which Notification does NOT fire
+// for. PostToolUse with the same matcher clears back to working once the
+// user has answered and claude resumes.
+var hookEvents = []hookEvent{
+	{"SessionStart", "", "idle"},
+	{"UserPromptSubmit", "", "working"},
+	{"Stop", "", "ready"},
+	{"Notification", "", "waiting_input"},
+	{"PreToolUse", "AskUserQuestion", "waiting_input"},
+	{"PostToolUse", "AskUserQuestion", "working"},
+}
+
+type hookEvent struct {
+	Event   string
+	Matcher string // tool name (or regex) — "" means fire for all tools
+	Kind    string
 }
 
 // SettingsPath is the path to a repo's local Claude Code settings file.
@@ -51,7 +62,7 @@ func Install(repoRoot, slug string) error {
 
 	for _, ev := range hookEvents {
 		cmd := command(slug, ev.Kind)
-		appendHook(hooks, ev.Event, cmd)
+		appendHook(hooks, ev.Event, ev.Matcher, cmd)
 	}
 	settings["hooks"] = hooks
 	return saveSettings(repoRoot, settings)
@@ -120,14 +131,18 @@ func saveSettings(repoRoot string, m map[string]any) error {
 
 // appendHook adds a hook entry of the form
 //
-//	{ "hooks": [{"type":"command","command":"<cmd>"}] }
+//	{ "matcher": "<matcher>", "hooks": [{"type":"command","command":"<cmd>"}] }
 //
-// under hooksMap[event], deduping by exact command string.
-func appendHook(hooksMap map[string]any, event, cmd string) {
+// under hooksMap[event], deduping by (matcher, command). The matcher key is
+// omitted entirely when matcher is empty.
+func appendHook(hooksMap map[string]any, event, matcher, cmd string) {
 	entries, _ := hooksMap[event].([]any)
-	// Dedupe.
 	for _, e := range entries {
 		em, _ := e.(map[string]any)
+		emMatcher, _ := em["matcher"].(string)
+		if emMatcher != matcher {
+			continue
+		}
 		inner, _ := em["hooks"].([]any)
 		for _, h := range inner {
 			hm, _ := h.(map[string]any)
@@ -136,11 +151,15 @@ func appendHook(hooksMap map[string]any, event, cmd string) {
 			}
 		}
 	}
-	entries = append(entries, map[string]any{
+	entry := map[string]any{
 		"hooks": []any{
 			map[string]any{"type": "command", "command": cmd},
 		},
-	})
+	}
+	if matcher != "" {
+		entry["matcher"] = matcher
+	}
+	entries = append(entries, entry)
 	hooksMap[event] = entries
 }
 
