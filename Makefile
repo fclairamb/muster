@@ -10,7 +10,8 @@ build:
 install: build
 	install -d $(PREFIX)/bin
 	install -m 0755 bin/muster $(PREFIX)/bin/muster
-	@echo "installed $(PREFIX)/bin/muster"
+	ln -sf muster $(PREFIX)/bin/mst
+	@echo "installed $(PREFIX)/bin/muster (with mst symlink)"
 
 test:
 	go test ./...
