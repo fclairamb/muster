@@ -102,7 +102,14 @@ func versionCommand() *cli.Command {
 	}
 }
 
-// rootAction is the default Action: register the dir (or cwd) and open the TUI.
+// rootAction is the default Action.
+//
+//   - `ssf`            → open the TUI, do not touch the registry.
+//   - `ssf <dir>`      → validate, register/touch <dir>, then open the TUI.
+//
+// Bare `ssf` deliberately does NOT register cwd — otherwise every launch
+// from a working directory re-adds it, and entries the user removed via
+// `r` reappear on the next run.
 func rootAction(ctx context.Context, cmd *cli.Command) error {
 	if cmd.Args().Len() > 1 {
 		return fmt.Errorf("expected at most one directory argument")
@@ -117,32 +124,25 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	target := cmd.Args().First()
-	if target == "" {
-		cwd, err := os.Getwd()
+	if target := cmd.Args().First(); target != "" {
+		abs, err := filepath.Abs(target)
 		if err != nil {
-			return err
+			return fmt.Errorf("resolve %q: %w", target, err)
 		}
-		target = cwd
-	}
-
-	abs, err := filepath.Abs(target)
-	if err != nil {
-		return fmt.Errorf("resolve %q: %w", target, err)
-	}
-	fi, err := os.Stat(abs)
-	if err != nil {
-		return fmt.Errorf("%q: %w", target, err)
-	}
-	if !fi.IsDir() {
-		return fmt.Errorf("%q is not a directory", target)
-	}
-	if err := reg.Add(abs); err != nil {
-		return fmt.Errorf("register dir: %w", err)
-	}
-	if info, err := repoinfo.Inspect(abs); err == nil {
-		if err := hooks.Install(info.RepoRoot, slug.Slug(info.RepoRoot)); err != nil {
-			slog.Warn("install hooks", "err", err)
+		fi, err := os.Stat(abs)
+		if err != nil {
+			return fmt.Errorf("%q: %w", target, err)
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("%q is not a directory", target)
+		}
+		if err := reg.Add(abs); err != nil {
+			return fmt.Errorf("register dir: %w", err)
+		}
+		if info, err := repoinfo.Inspect(abs); err == nil {
+			if err := hooks.Install(info.RepoRoot, slug.Slug(info.RepoRoot)); err != nil {
+				slog.Warn("install hooks", "err", err)
+			}
 		}
 	}
 

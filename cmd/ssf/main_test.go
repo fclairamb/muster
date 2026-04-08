@@ -105,6 +105,29 @@ func TestRejectsNonexistentPath(t *testing.T) {
 	}
 }
 
+func TestBareInvocationDoesNotRegisterCwd(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go missing")
+	}
+	bin := buildBinary(t)
+	xdg := t.TempDir()
+	cwd := t.TempDir()
+
+	cmd := exec.Command(bin)
+	cmd.Dir = cwd
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg, "HOME="+xdg)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bare ssf: %v %s", err, out)
+	}
+	// Registry must remain empty.
+	cfg := filepath.Join(xdg, "ssf", "config.toml")
+	if b, err := os.ReadFile(cfg); err == nil {
+		if strings.Contains(string(b), cwd) {
+			t.Fatalf("bare ssf added cwd to registry:\n%s", b)
+		}
+	}
+}
+
 func TestRejectsExtraArg(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go missing")

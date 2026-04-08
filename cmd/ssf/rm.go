@@ -124,12 +124,52 @@ func resolveTarget(dirs []config.Dir, arg string) (string, error) {
 
 // unregister is the shared registered-dir removal path used by both the TUI's
 // `r` action and the `ssf rm` subcommand.
+//
+// Symlink-tolerant: if path doesn't directly match any registered entry,
+// fall back to comparing canonicalized (EvalSymlinks) forms. This handles
+// the macOS case where /tmp registers as /tmp but resolves at runtime to
+// /private/tmp; without the fallback, removing such an entry from the TUI
+// would silently no-op and the entry would reappear next launch.
 func unregister(reg *registry.Registry, path string) error {
-	if err := reg.Remove(path); err != nil {
+	dirs, err := reg.List()
+	if err != nil {
 		return err
 	}
-	if info, err := repoinfo.Inspect(path); err == nil {
+	target := matchRegisteredPath(dirs, path)
+	if target == "" {
+		// Nothing to remove. Not an error — keeps the TUI snappy.
+		return nil
+	}
+	if err := reg.Remove(target); err != nil {
+		return err
+	}
+	if info, err := repoinfo.Inspect(target); err == nil {
 		_ = hooks.Uninstall(info.RepoRoot, slug.Slug(info.RepoRoot))
 	}
 	return nil
+}
+
+// matchRegisteredPath returns the registered path (as stored in the
+// registry) that corresponds to the given runtime path, or "" if none.
+// Direct equality is tried first; symlink-resolved equality is the fallback.
+func matchRegisteredPath(dirs []config.Dir, path string) string {
+	for _, d := range dirs {
+		if d.Path == path {
+			return d.Path
+		}
+	}
+	canonTarget, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		canonTarget = path
+	}
+	for _, d := range dirs {
+		canonD, err := filepath.EvalSymlinks(d.Path)
+		if err != nil {
+			canonD = d.Path
+		}
+		if canonD == canonTarget {
+			return d.Path
+		}
+	}
+	return ""
 }
